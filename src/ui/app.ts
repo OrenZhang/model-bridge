@@ -3,46 +3,13 @@ const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.qu
 const escape = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const number = (n: number) => new Intl.NumberFormat('zh-CN', { notation: n >= 100000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(n);
 const providerNames: Record<string, string> = { openai: 'ChatGPT / OpenAI', kimi: 'Kimi', minimax: 'MiniMax', anthropic: 'Anthropic', custom: '自定义服务' };
-const titles: Record<string, string> = { overview: '总览', connections: '账号与连接', models: '模型目录', clients: '客户端与服务', usage: '用量统计' };
-let state: any; let page = 'overview'; let days = 7; let editing: any; let activeLogin: string | undefined; let previewId: string | undefined; let toastTimer: ReturnType<typeof setTimeout>; let refreshing = false;
+const titles: Record<string, string> = { overview: '总览', connections: '账号与连接', models: '模型目录', clients: '客户端模式', usage: '用量统计' };
+let state: any; let page = 'overview'; let days = 7; let editing: any; let activeLogin: string | undefined; let toastTimer: ReturnType<typeof setTimeout>; let refreshing = false;
 const usageFilters: Record<string, string> = {};
 let editingModel: { connectionId: string; modelId: string } | undefined;
-let selectedAddress = ''; const clientModels: Record<string, string> = {};
-const clientTabs = [
-  { id: 'codex', name: 'Codex', provider: 'openai' },
-  { id: 'claude', name: 'Claude Code', provider: 'anthropic' },
-  { id: 'kimi', name: 'Kimi', provider: 'kimi' },
-  { id: 'minimax', name: 'MiniMax', provider: 'minimax' },
-  { id: 'generic', name: '其他 Agent', provider: 'custom' },
-];
-let clientTab = 'codex'; let clientPane = 'accounts'; let providerTarget = 'codex'; let genericProtocol = 'responses';
-let generatedPlan: { key: string; status: 'loading' | 'ready' | 'error'; result?: any; error?: string } | undefined;
-let clientBusy = false;
-const selectedClientTab = () => clientTabs.find(tab => tab.id === clientTab)!;
-const targetClient = () => ['kimi', 'minimax'].includes(clientTab) ? providerTarget : clientTab;
-const configAddress = () => [state.address, ...(state.lanAddresses ?? [])].includes(selectedAddress) ? selectedAddress : state.address;
-const configModelEntries = () => activeModels().filter(({ connection, model }: any) =>
-  (!['kimi', 'minimax'].includes(clientTab) || connection.provider === selectedClientTab().provider) && (targetClient() === 'generic' || model.tools));
-const modelSelectionKey = () => clientTab + ':' + targetClient();
-function selectedConfigModel() {
-  const entries = configModelEntries(); const key = modelSelectionKey();
-  if (!entries.some(({ connection, model }: any) => connection.id + '/' + model.id === clientModels[key])) clientModels[key] = entries[0] ? entries[0].connection.id + '/' + entries[0].model.id : '';
-  return clientModels[key] ?? '';
-}
-function planKey() { return JSON.stringify([targetClient(), selectedConfigModel(), state.address, state.config.connections]); }
-async function prepareClientConfig(force = false) {
-  if (targetClient() === 'generic' || !selectedConfigModel()) return;
-  const key = planKey();
-  if (!force && generatedPlan?.key === key) return generatedPlan.result;
-  const request = { key, status: 'loading' as const }; generatedPlan = request;
-  try {
-    const result = await call('client.preview', { client: targetClient(), model: selectedConfigModel() });
-    if (generatedPlan === request) generatedPlan = { key, status: 'ready', result };
-    return result;
-  } catch (error: any) {
-    if (generatedPlan === request) generatedPlan = { key, status: 'error', error: error.message };
-  } finally { if (page === 'clients' && clientPane === 'config') render(); }
-}
+let selectedAddress = '';
+const clientTabs = [{ id: 'codex', name: 'Codex' }, { id: 'claude', name: 'Claude Code' }];
+let clientTab = 'codex'; let clientBusy = false;
 
 async function call(operation: string, payload?: unknown) { return window.modelBridge.call(operation, payload); }
 function toast(message: string, error = false) { const element = $('#toast'); element.textContent = message.replace(/^Error invoking remote method '[^']+': Error: /, ''); element.classList.toggle('error', error); element.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => element.hidden = true, error ? 9000 : 4500); }
@@ -83,42 +50,23 @@ function modelsTable(provider?: string) {
   if (!entries.length) return '<div class="panel empty"><div class="empty-symbol">◇</div><h3>模型目录还是空的</h3><p>配置或登录成功后自动获取，也可手动填写模型 ID。</p></div>';
   return `<div class="panel table-wrap"><table><thead><tr><th>模型</th><th>连接</th><th>上下文配置</th><th>能力</th><th></th></tr></thead><tbody>${entries.map(({ connection: c, model: m }: any) => `<tr><td><strong>${escape(m.name)}</strong><small>${escape(c.id + '/' + m.id)}</small></td><td>${escape(c.name)}</td><td>${number(m.contextWindow)}</td><td>${!m.enabled ? '<span class="tag">已停用</span> ' : ''}${m.tools ? '<span class="tag">工具调用</span> ' : ''}${m.images ? '<span class="tag">图片</span> ' : ''}${m.reasoning.length ? '<span class="tag">推理</span>' : ''}</td><td><button class="plain" data-action="model-edit" data-id="${escape(c.id)}" data-model="${escape(m.id)}">设置</button></td></tr>`).join('')}</tbody></table></div>`;
 }
-function clientConfiguration() {
-  const client = targetClient(); const model = selectedConfigModel(); const entries = configModelEntries();
-  const isProvider = ['kimi', 'minimax'].includes(clientTab);
-  const selectTarget = isProvider ? `<label>接入客户端<select id="config-target">${[['codex', 'Codex'], ['claude', 'Claude Code'], ['generic', '其他 Agent']].map(([id, name]) => `<option value="${id}" ${client === id ? 'selected' : ''}>${name}</option>`).join('')}</select></label>` : '';
-  const modelOptions = entries.map(({ connection, model: entry }: any) => `<option value="${escape(connection.id + '/' + entry.id)}" ${model === connection.id + '/' + entry.id ? 'selected' : ''}>${escape(connection.name + ' · ' + entry.name)}</option>`).join('');
-  const options = `<div class="config-options">${selectTarget}<label class="model-choice">默认账号 / 模型<select id="config-model" ${!model ? 'disabled' : ''}>${modelOptions || '<option>请先添加支持工具调用的模型</option>'}</select></label>${client === 'generic' ? `<label>接口格式<select id="config-protocol">${[['responses', 'Responses'], ['messages', 'Messages'], ['chat', 'Chat Completions']].map(([id, name]) => `<option value="${id}" ${id === genericProtocol ? 'selected' : ''}>${name}</option>`).join('')}</select></label>` : ''}</div>`;
-  const title = client === 'codex' ? 'Codex 配置' : client === 'claude' ? 'Claude Code 配置' : '通用 Agent 配置';
-  const description = client === 'codex' ? '桌面端与 CLI 共用配置，模型目录包含所有已启用的连接。' : client === 'claude' ? '使用 Messages 接口，默认模型和子代理模型一并配置。' : '复制 JSON，按目标客户端的设置字段填写 Base URL、密钥和模型。';
-  const heading = `<div class="config-heading"><div><h3>${title}</h3><p>${description}</p></div>${client !== 'generic' ? `<button class="plain" data-action="restore" data-id="${client}" ${clientBusy ? 'disabled' : ''}>恢复原配置</button>` : ''}</div>`;
-  if (!model) return `<div class="panel configuration-panel">${heading}${options}<div class="config-empty">暂无可用模型。先在“账号与模型”中添加连接，配置成功后自动获取模型。</div></div>`;
-  if (client === 'generic') {
-    const preview = JSON.stringify({ base_url: configAddress() + (genericProtocol === 'messages' ? '' : '/v1'), api_key: '<local gateway key>', model, protocol: genericProtocol }, null, 2);
-    return `<div class="panel configuration-panel">${heading}${options}<div class="config-code-label"><span>JSON · 密钥已隐藏</span></div><pre class="config-code">${escape(preview)}</pre><div class="config-footer"><span>复制或导出时包含本网关访问密钥</span><div><button class="secondary" data-action="export-generic">导出 JSON</button><button class="primary" data-action="copy-generic">复制 JSON</button></div></div></div>`;
-  }
-  const current = generatedPlan?.key === planKey() ? generatedPlan : undefined;
-  const ready = current?.status === 'ready'; const busy = !ready || clientBusy;
-  return `<div class="panel configuration-panel">${heading}${options}<div class="config-code-label"><span>${client === 'codex' ? 'config.toml' : 'settings.json'} · 密钥已隐藏</span><button class="plain" data-action="regenerate-config" ${clientBusy ? 'disabled' : ''}>重新生成</button></div>${ready ? `<pre class="config-code">${escape(current.result.preview)}</pre><div class="config-path">写入位置 <code>${escape(current.result.path)}</code></div>` : `<div class="config-empty ${current?.status === 'error' ? 'config-error' : ''}">${escape(current?.error ?? '正在生成配置…')}</div>`}<div class="config-footer"><span>自动备份原文件，可随时恢复</span><div><button class="secondary" data-action="export-config" ${busy ? 'disabled' : ''}>导出</button>${client === 'codex' ? `<button class="secondary" data-action="copy-config" data-format="json" title="通用 JSON 数据；Codex 原生配置使用 TOML" ${busy ? 'disabled' : ''}>复制 JSON</button>` : ''}<button class="secondary" data-action="copy-config" data-format="native" ${busy ? 'disabled' : ''}>复制 ${client === 'codex' ? 'TOML' : 'JSON'}</button><button class="primary" data-action="write-config" ${busy ? 'disabled' : ''}>${clientBusy ? '正在写入…' : '一键写入'}</button></div></div>${client === 'codex' ? '<div class="config-footnote">Codex 使用 TOML。JSON 用于配置数据交换，手动配置时请复制 TOML。</div>' : ''}</div>`;
-}
 function clientsPage() {
-  const tab = selectedClientTab(); const count = state.config.connections.filter((c: any) => c.provider === tab.provider).length;
-  const tabs = `<div class="client-tabs" role="tablist" aria-label="客户端与服务">${clientTabs.map(item => `<button id="tab-${item.id}" role="tab" aria-selected="${clientTab === item.id}" aria-controls="client-tab-panel" tabindex="${clientTab === item.id ? 0 : -1}" class="${clientTab === item.id ? 'active' : ''}" data-client-tab="${item.id}">${item.name}</button>`).join('')}</div>`;
-  const panes = `<div class="client-subnav" role="tablist" aria-label="管理内容"><button role="tab" aria-selected="${clientPane === 'accounts'}" class="${clientPane === 'accounts' ? 'active' : ''}" data-client-pane="accounts">账号与模型${count ? `<span>${count}</span>` : ''}</button><button role="tab" aria-selected="${clientPane === 'config'}" class="${clientPane === 'config' ? 'active' : ''}" data-client-pane="config">接入配置</button></div>`;
-  let content: string;
-  if (clientPane === 'config') content = clientConfiguration();
-  else {
-    const explanation = clientTab === 'codex' ? '管理 ChatGPT / OpenAI 账号，可复用本机登录或使用设备码添加。' : clientTab === 'claude' ? '管理 Anthropic API 连接，也可在接入配置中选择其他服务商模型。' : clientTab === 'generic' ? '接入自定义 API 或本地模型服务，统一提供三种接口。' : `管理 ${tab.name} 账号和模型，在接入配置中选择要使用的客户端。`;
-    content = `<div class="accounts-toolbar"><p>${explanation}</p><button class="primary" data-action="add-connection" data-provider="${tab.provider}">＋ 添加连接</button></div>${clientTab === 'codex' ? localAccountPanel() : ''}${count ? `<div class="section-heading"><h3>已管理的连接 <span class="tag">${count}</span></h3></div>` : ''}${connections(tab.provider)}${activeModels().some(({ connection }: any) => connection.provider === tab.provider) ? `<div class="section-heading"><h3>可用模型</h3></div>${modelsTable(tab.provider)}` : ''}`;
-  }
-  return `${tabs}${panes}<section id="client-tab-panel" role="tabpanel" aria-labelledby="tab-${tab.id}">${content}</section>`;
+  const client = clientTabs.find(item => item.id === clientTab)!;
+  const status = state.clientStatuses?.[clientTab];
+  const unified = status?.mode === 'bridge';
+  const original = status && ['external', 'unconfigured'].includes(status.mode);
+  const available = activeModels().filter(({ model }: any) => model.tools);
+  const providers = new Set(available.map(({ connection }: any) => connection.id)).size;
+  const disabled = clientBusy || !status || status.mode === 'error';
+  const tabs = `<div class="client-tabs" role="tablist" aria-label="客户端">${clientTabs.map(item => `<button id="tab-${item.id}" role="tab" aria-selected="${clientTab === item.id}" aria-controls="client-tab-panel" tabindex="${clientTab === item.id ? 0 : -1}" class="${clientTab === item.id ? 'active' : ''}" data-client-tab="${item.id}">${item.name}</button>`).join('')}</div>`;
+  return `${tabs}<section id="client-tab-panel" role="tabpanel" aria-labelledby="tab-${clientTab}"><div class="mode-heading"><p>选择 ${client.name} 的使用模式</p><button class="plain" data-go="connections">管理服务商 →</button></div><div class="panel mode-list"><div class="mode-row ${unified ? 'is-current' : ''}"><div class="mode-symbol">⇄</div><div class="mode-description"><h3>统一模型</h3><p>连接本地网关，使用所有已接入服务商的模型。</p><small>${providers} 个连接 · ${available.length} 个模型 · 客户端无需单独登录服务商</small></div>${unified ? '<span class="using-service">使用中</span>' : `<button class="primary" data-action="use-gateway" ${disabled || !available.length ? 'disabled' : ''}>启用</button>`}</div><div class="mode-row ${original ? 'is-current' : ''}"><div class="mode-symbol native-mode">↶</div><div class="mode-description"><h3>原始认证</h3><p>使用客户端原来的连接和账号认证。</p><small>保留原有登录，可随时切回</small></div>${original ? '<span class="using-service">使用中</span>' : `<button class="secondary" data-action="use-original" ${disabled || !status?.canRestore ? 'disabled' : ''}>切换</button>`}</div></div>${status?.error ? `<p class="hint service-error">${escape(status.error)}</p>` : ''}${!available.length ? '<p class="switch-note">添加服务商后即可启用统一模型，模型会自动汇总。</p>' : '<p class="switch-note">统一模式下直接在客户端选择模型。切换模式后，已打开的客户端可能需要重启。</p>'}${unified && !status.canRestore ? '<p class="hint service-error">未找到可用的原始配置备份，暂时无法切回。</p>' : ''}</section>`;
 }
 function render() {
   $('#page-title').textContent = titles[page]!;
   $('#service-status').innerHTML = '<i></i> 本地网关运行中';
   let html = '';
   if (page === 'overview') html = `<p class="intro">所有模型，一个入口。在熟悉的客户端里自由选择。</p>${endpointCards()}${stats()}<div class="section-heading"><div><h3>我的连接 <span class="tag">${state.config.connections.length}</span></h3><p>连接各自管理，模型自动汇总</p></div><button class="primary" data-action="add-connection">＋ 添加连接</button></div>${connections()}<div class="section-heading"><h3>可用模型 <span class="tag">${activeModels().length}</span></h3><button class="plain" data-go="models">查看模型目录 →</button></div>${modelsTable()}`;
-  if (page === 'connections') html = `<div class="row intro"><p>管理账号、API Key 和每个连接的网络设置。</p><button class="primary" data-action="add-connection">＋ 添加连接</button></div>${connections()}`;
+  if (page === 'connections') html = `<div class="row intro"><p>管理账号、API Key 和每个连接的网络设置。</p><button class="primary" data-action="add-connection">＋ 添加连接</button></div>${localAccountPanel()}<div class="section-heading"><h3>已添加的连接</h3></div>${connections()}`;
   if (page === 'models') html = `<p class="intro">这些模型通过同一个网关提供服务。客户端根据各自能力加载模型目录。</p>${modelsTable()}<p class="hint">模型列表不等于调用权限。首次接入请验证实际调用；自定义模型的上下文和能力需要与服务商说明核对。</p>`;
   if (page === 'clients') html = clientsPage();
   if (page === 'usage') {
@@ -130,15 +78,6 @@ function render() {
   if (page === 'overview') {
     const access = $<HTMLInputElement>('#lan-access'); access.onchange = () => void action('service.lan', { enabled: access.checked }, '服务监听设置已更新').catch(() => refresh());
     const addresses = $<HTMLSelectElement>('#service-address'); addresses.value = selectedAddress; addresses.onchange = () => { selectedAddress = addresses.value; render(); };
-  }
-  if (page === 'clients' && clientPane === 'config') {
-    const target = document.querySelector<HTMLSelectElement>('#config-target');
-    if (target) target.onchange = () => { providerTarget = target.value; generatedPlan = undefined; render(); };
-    const model = document.querySelector<HTMLSelectElement>('#config-model');
-    if (model) model.onchange = () => { clientModels[modelSelectionKey()] = model.value; generatedPlan = undefined; render(); };
-    const protocol = document.querySelector<HTMLSelectElement>('#config-protocol');
-    if (protocol) protocol.onchange = () => { genericProtocol = protocol.value; render(); };
-    if (selectedConfigModel() && targetClient() !== 'generic' && generatedPlan?.key !== planKey()) void prepareClientConfig();
   }
   if (page === 'connections') { const manage = document.createElement('button'); manage.className = 'secondary'; manage.dataset.action = 'manage-networks'; manage.textContent = '管理代理订阅'; $('#content .intro').append(manage); }
   $('#content').querySelectorAll<HTMLElement>('.connection-card').forEach(card => {
@@ -193,13 +132,11 @@ document.addEventListener('keydown', event => {
   const buttons = [...target.parentElement!.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
   const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (buttons.indexOf(target as HTMLButtonElement) + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
   event.preventDefault(); const next = buttons[index]!; next.click();
-  if (next.dataset.clientPane) document.querySelector<HTMLButtonElement>(`[data-client-pane="${next.dataset.clientPane}"]`)?.focus();
 });
 document.addEventListener('click', event => {
   const target = (event.target as HTMLElement).closest<HTMLElement>('button'); if (!target) return;
   if (target.dataset.close) { $<HTMLDialogElement>('#' + target.dataset.close).close(); return; }
-  if (target.dataset.clientTab) { clientTab = target.dataset.clientTab; generatedPlan = undefined; render(); document.getElementById('tab-' + clientTab)?.focus(); return; }
-  if (target.dataset.clientPane) { clientPane = target.dataset.clientPane; render(); return; }
+  if (target.dataset.clientTab) { clientTab = target.dataset.clientTab; render(); document.getElementById('tab-' + clientTab)?.focus(); return; }
   const next = target.dataset.page ?? target.dataset.go;
   if (next) { page = next; document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', (b as HTMLElement).dataset.page === page)); render(); return; }
   const operation = target.dataset.action; const id = target.dataset.id;
@@ -228,23 +165,13 @@ document.addEventListener('click', event => {
       if (operation === 'discover') await action('connection.discover', { id }, '模型目录已同步');
       if (operation === 'login') { activeLogin = id; $<HTMLDialogElement>('#login-dialog').showModal(); updateLogin(); await action('device.login', { id }); }
       if (operation === 'delete' && confirm('移除此连接及其模型？已有客户端请求可能受到影响。')) await action('connection.delete', { id }, '连接已移除');
-      if (operation === 'regenerate-config') await prepareClientConfig(true);
-      if (['write-config', 'copy-config', 'export-config'].includes(operation ?? '')) {
-        const plan = await prepareClientConfig(); if (!plan) throw new Error('请先生成可用的客户端配置。');
-        if (operation === 'write-config') {
-          clientBusy = true; render();
-          try { await action('client.apply', { id: plan.id }, '配置已写入并备份，重新打开客户端后生效'); }
-          finally { clientBusy = false; generatedPlan = undefined; render(); }
-        }
-        if (operation === 'copy-config') await action('client.copy-config', { id: plan.id, format: target.dataset.format }, '配置已复制，包含本网关访问密钥');
-        if (operation === 'export-config') { const saved = await call('client.export-config', { id: plan.id, client: targetClient(), format: 'native' }); if (saved) toast('客户端配置已导出'); }
+      if (operation === 'use-gateway' || operation === 'use-original') {
+        if (clientBusy) return;
+        const client = clientTab; clientBusy = true; render();
+        try {
+          await action(operation === 'use-gateway' ? 'client.gateway' : 'client.original', { client }, operation === 'use-gateway' ? '已启用统一模型，可在客户端选择所有已接入模型' : '已切回原始认证');
+        } finally { clientBusy = false; render(); }
       }
-      if (operation === 'copy-generic' || operation === 'export-generic') {
-        const result = await call(operation === 'copy-generic' ? 'client.copy-generic' : 'client.export-generic', { model: selectedConfigModel(), protocol: genericProtocol, address: configAddress() });
-        if (result) toast(operation === 'copy-generic' ? 'JSON 已复制，包含本网关访问密钥' : 'JSON 已导出');
-      }
-      if (operation === 'preview') { const result = await action('client.preview', { client: id, model: clientModels[id!] }); previewId = result.id; $('#preview-path').textContent = result.path; $('#preview-code').textContent = result.preview; $<HTMLDialogElement>('#preview-dialog').showModal(); }
-      if (operation === 'restore' && confirm('恢复接入 Model Bridge 前的客户端配置？')) { await action('client.restore', { client: id }, '原配置已恢复'); generatedPlan = undefined; render(); }
       if (operation === 'copy-key') await action('client.copy-key', {}, '访问密钥已复制');
       if (operation === 'copy-address') await action('client.copy-address', { protocol: id, kind: target.dataset.kind, address: selectedAddress }, '地址已复制');
       if (operation === 'export') await action('usage.export', {}, '导出操作已完成');
@@ -288,6 +215,5 @@ $<HTMLFormElement>('#model-form').onsubmit = event => {
   void action('connection.save', { connection, autoDiscover: false }, '模型设置已保存').then(() => $<HTMLDialogElement>('#model-dialog').close()).catch(() => {});
 };
 $('#cancel-login').onclick = () => void action('device.cancel', { id: activeLogin }).catch(() => {});
-$('#apply-client').onclick = () => void action('client.apply', { id: previewId }, '配置已应用，请重新启动客户端').then(() => $<HTMLDialogElement>('#preview-dialog').close()).catch(() => {});
-void refresh(); setInterval(() => { if (!clientBusy && !document.querySelector('select:focus, .config-code:focus') && !window.getSelection()?.toString()) void refresh(); }, 4000);
+void refresh(); setInterval(() => { if (!clientBusy && !document.querySelector('select:focus') && !window.getSelection()?.toString()) void refresh(); }, 4000);
 export {};

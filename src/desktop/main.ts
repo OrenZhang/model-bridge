@@ -9,6 +9,7 @@ import { usageCsv, usageView } from '../core/usage.js';
 import { z } from 'zod';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
+app.setName('Model Bridge');
 let runtime: Runtime | undefined; let window: BrowserWindow | undefined; let tray: Tray | undefined; let quitting = false;
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
@@ -17,6 +18,8 @@ else {
   app.on('before-quit', event => { if (quitting) return; event.preventDefault(); quitting = true; void runtime?.close().finally(() => app.quit()); if (!runtime) app.quit(); });
   void app.whenReady().then(async () => {
   try {
+    const applicationIcon = nativeImage.createFromPath(path.join(app.getAppPath(), 'assets', 'icon.png'));
+    if (process.platform === 'darwin') app.dock?.setIcon(applicationIcon);
     const data = process.env.MODEL_BRIDGE_DATA_DIR ? path.resolve(process.env.MODEL_BRIDGE_DATA_DIR) : app.getPath('userData');
     const vault = new DesktopVault(path.join(data, 'credentials.enc'));
     runtime = await createRuntime(data, vault, os.homedir(), async destination => {
@@ -38,7 +41,9 @@ else {
             const days = z.number().int().min(1).max(90).parse(payload?.days ?? 7);
             const filters = z.object({ clientId: z.string().optional(), provider: z.string().optional(), connectionId: z.string().optional(), model: z.string().optional() }).parse(payload?.filters ?? {});
             const records = await active.usage.list(days);
-            return { config: active.store.get(), address: active.gateway.address, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...usageView(records, filters, days), usageWriteFailed: active.usageWriteFailed() };
+            const config = active.store.get(); const address = active.gateway.address;
+            const [codex, claude] = await Promise.all(['codex', 'claude'].map(client => active.clients.status(client as 'codex' | 'claude', config, address)));
+            return { config, address, clientStatuses: { codex, claude }, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...usageView(records, filters, days), usageWriteFailed: active.usageWriteFailed() };
           }
           case 'connection.save': return active.saveConnection(payload.connection, payload.apiKey ? z.string().max(20000).parse(payload.apiKey) : undefined, payload.autoDiscover !== false);
           case 'connection.discover': return active.discover(z.string().parse(payload.id));
@@ -79,6 +84,21 @@ else {
           }
           case 'proxy.default': { await active.store.update(config => { config.defaultProxy = payload; }); return true; }
           case 'client.preview': { const client = z.enum(['codex', 'claude']).parse(payload.client); return active.clients.plan(client, active.store.get(), active.gateway.address, await active.ensureClient(client), payload.model); }
+          case 'client.gateway': {
+            const client = z.enum(['codex', 'claude']).parse(payload.client);
+            const result = await active.clients.enableGateway(client, () => active.store.get(), active.gateway.address, await active.ensureClient(client));
+            await active.localAccounts.scan(); return result;
+          }
+          case 'client.original': {
+            const client = z.enum(['codex', 'claude']).parse(payload.client);
+            const result = await active.clients.restoreOriginalMode(client, active.gateway.address);
+            await active.localAccounts.scan(); return result;
+          }
+          case 'client.switch': {
+            const { client, model } = z.object({ client: z.enum(['codex', 'claude']), model: z.string().min(1) }).parse(payload);
+            const result = await active.clients.switchService(client, () => active.store.get(), active.gateway.address, await active.ensureClient(client), model);
+            await active.localAccounts.scan(); return result;
+          }
           case 'client.copy-config': {
             const { clipboard } = await import('electron'); clipboard.writeText(active.clients.export(z.string().parse(payload.id), z.enum(['native', 'json']).parse(payload.format))); return true;
           }
@@ -115,7 +135,7 @@ else {
         }
       } catch (error) { throw new Error(error instanceof z.ZodError ? '配置格式有误，请检查地址、模型和代理设置。' : error instanceof Error ? error.message : '操作失败'); }
     });
-    window = new BrowserWindow({ width: 1180, height: 800, minWidth: 920, minHeight: 640, title: 'Model Bridge', backgroundColor: '#f6f5f1', webPreferences: { preload: path.join(directory, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    window = new BrowserWindow({ width: 1180, height: 800, minWidth: 920, minHeight: 640, title: 'Model Bridge', icon: applicationIcon, backgroundColor: '#f6f5f1', webPreferences: { preload: path.join(directory, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.on('close', event => { if (!quitting) { event.preventDefault(); window?.hide(); } });

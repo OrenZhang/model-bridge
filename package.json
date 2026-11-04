@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "npm run build && node dist/cli.js",
     "build": "tsc && tsc -p tsconfig.ui.json && node scripts/build-ui.mjs",
+    "icons": "node scripts/build-icons.mjs",
     "start": "node dist/cli.js",
     "desktop": "npm run build && electron .",
     "check": "tsc --noEmit && tsc -p tsconfig.ui.json",
@@ -48,9 +49,11 @@
     },
     "files": [
       "dist/**/*",
+      "assets/**/*",
       "package.json"
     ],
     "mac": {
+      "icon": "assets/icon.icns",
       "target": [
         "dmg",
         "zip"
@@ -58,6 +61,7 @@
       "category": "public.app-category.developer-tools"
     },
     "win": {
+      "icon": "assets/icon.ico",
       "target": [
         "nsis"
       ]

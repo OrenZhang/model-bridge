@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Model Bridge</title>
+  <defs><linearGradient id="tile" x1="0" y1="64" x2="0" y2="960" gradientUnits="userSpaceOnUse"><stop stop-color="#36705c"/><stop offset="1" stop-color="#1f503f"/></linearGradient></defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#tile)"/>
+  <path d="M268 680V464a122 122 0 0 1 244 0v216M512 464a122 122 0 0 1 244 0v216" fill="none" stroke="#f4f8f0" stroke-width="96" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
