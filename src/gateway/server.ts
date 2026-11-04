@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { BridgeError, resolveRoute, type Config, type Connection, type Protocol } from '../core/config.js';
 import { codexCatalog, openaiCatalog, anthropicCatalog } from '../core/catalog.js';
 import { Network } from '../core/network.js';
@@ -41,7 +42,9 @@ export async function startGateway(options: GatewayOptions) {
   const server = createServer((req, res) => { void handle(req, res); });
   server.requestTimeout = 30000; server.headersTimeout = 15000;
   async function handle(req: IncomingMessage, res: ServerResponse) {
-    const url = new URL(req.url ?? '/', 'http://localhost');
+    let url: URL;
+    try { url = new URL(req.url ?? '/', 'http://localhost'); }
+    catch { json(res, 400, { error: { code: 'invalid_url', message: 'Invalid request URL.' } }); return; }
     const protocol = protocolAt(url.pathname);
     const controller = new AbortController(); inflight.add(controller);
     res.on('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -50,7 +53,9 @@ export async function startGateway(options: GatewayOptions) {
     let route: ReturnType<typeof resolveRoute> | undefined; let clientId = ''; let selected = ''; const requestId = randomUUID();
     try {
       const host = req.headers.host?.split(':')[0];
-      if (!host || !['localhost', '127.0.0.1'].includes(host) || req.headers.origin) throw new BridgeError(403, 'forbidden_origin', 'Only local agent clients may access this gateway.');
+      const local = req.socket.localAddress?.replace('::ffff:', '');
+      const allowed = ['localhost', '127.0.0.1', ...(options.config().listenHost === '0.0.0.0' && local ? [local] : [])];
+      if (!host || !allowed.includes(host) || req.headers.origin) throw new BridgeError(403, 'forbidden_origin', 'Only authenticated agent clients may access this gateway.');
       if (url.pathname === '/healthz' && req.method === 'GET') { json(res, 200, { status: 'ok', service: 'model-bridge' }); return; }
       const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') ?? (typeof req.headers['x-api-key'] === 'string' ? req.headers['x-api-key'] : '');
       const hash = Buffer.from(tokenHash(token), 'hex');
@@ -156,7 +161,10 @@ export async function startGateway(options: GatewayOptions) {
       if (route && protocol) await options.usage.append({ id: requestId, startedAt: new Date(Date.now() - (performance.now() - started)).toISOString(), clientId, connectionId: route.connection.id, provider: route.connection.provider, model: selected, upstreamModel: route.model.upstreamId, protocol, status, durationMs: Math.round(performance.now() - started), firstByteMs: firstByte, tokens, estimatedCostUsd: estimatedCost(route.model, tokens), ...(errorCode ? { errorCode } : {}) }).catch(() => options.onUsageError?.());
     }
   }
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.config().port, '127.0.0.1', resolve); });
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.config().port, options.config().listenHost, resolve); });
   address = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { address, async close() { for (const controller of inflight) controller.abort(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await options.network.close(); } };
+  const port = (server.address() as AddressInfo).port;
+  return { address, activeRequests: () => inflight.size,
+    lanAddresses: () => options.config().listenHost === '0.0.0.0' ? [...new Set(Object.values(networkInterfaces()).flatMap(values => (values ?? []).filter(item => item.family === 'IPv4' && !item.internal).map(item => `http://${item.address}:${port}`)))] : [],
+    async close() { for (const controller of inflight) controller.abort(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await options.network.close(); } };
 }

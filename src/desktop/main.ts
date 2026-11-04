@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, native
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, readFile, stat } from 'node:fs/promises';
 import { createRuntime, type Runtime } from '../core/runtime.js';
 import { DesktopVault } from './vault.js';
 import { usageCsv, usageView } from '../core/usage.js';
@@ -29,6 +29,7 @@ else {
     }, process.env.MODEL_BRIDGE_CODEX_BINARY);
     for (const client of ['codex', 'claude', 'generic'] as const) await runtime.ensureClient(client);
     const active = runtime;
+    void active.localAccounts.scan();
     ipcMain.handle('model-bridge', async (event, operation: string, payload: any) => {
       if (event.sender !== window?.webContents || event.senderFrame !== window?.webContents.mainFrame) throw new Error('Invalid sender.');
       try {
@@ -37,30 +38,77 @@ else {
             const days = z.number().int().min(1).max(90).parse(payload?.days ?? 7);
             const filters = z.object({ clientId: z.string().optional(), provider: z.string().optional(), connectionId: z.string().optional(), model: z.string().optional() }).parse(payload?.filters ?? {});
             const records = await active.usage.list(days);
-            return { config: active.store.get(), address: active.gateway.address, logins: active.loginStates(), ...usageView(records, filters, days), usageWriteFailed: active.usageWriteFailed() };
+            return { config: active.store.get(), address: active.gateway.address, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...usageView(records, filters, days), usageWriteFailed: active.usageWriteFailed() };
           }
-          case 'connection.save': return active.saveConnection(payload.connection, payload.apiKey ? z.string().max(20000).parse(payload.apiKey) : undefined);
+          case 'connection.save': return active.saveConnection(payload.connection, payload.apiKey ? z.string().max(20000).parse(payload.apiKey) : undefined, payload.autoDiscover !== false);
           case 'connection.discover': return active.discover(z.string().parse(payload.id));
           case 'connection.delete': {
             const config = active.store.get(); const id = z.string().parse(payload.id);
             const existing = config.connections.find(c => c.id === id);
             if (existing?.auth === 'chatgpt-device') await active.loginFor(id).logout();
-            config.connections = config.connections.filter(c => c.id !== id); await active.store.save(config); await active.clients.updateCatalog(config); return true;
+            const updated = await active.store.update(current => { current.connections = current.connections.filter(c => c.id !== id); }); await active.clients.updateCatalog(updated); return true;
           }
           case 'device.login': return active.loginFor(z.string().parse(payload.id)).login();
           case 'device.cancel': return active.loginFor(z.string().parse(payload.id)).cancel();
           case 'device.open': { const url = active.loginFor(z.string().parse(payload.id)).state.verificationUrl; if (url) await shell.openExternal(url); return true; }
+          case 'local.detect': return active.localAccounts.scan();
+          case 'local.import': return active.importLocalAccount(z.string().parse(payload.id));
+          case 'service.lan': return active.setLanAccess(z.boolean().parse(payload.enabled));
+          case 'network.save': return active.managed.save(payload);
+          case 'network.refresh': return active.managed.refresh(z.string().parse(payload.id));
+          case 'network.select': return active.managed.select(z.string().parse(payload.id), z.string().parse(payload.node));
+          case 'network.remove': return active.managed.remove(z.string().parse(payload.id));
+          case 'network.install': return active.managed.core.ensure();
+          case 'network.install-offline': {
+            const result = await dialog.showOpenDialog(window!, { properties: ['openFile'], filters: [{ name: 'Mihomo 官方压缩包', extensions: ['gz', 'zip'] }] });
+            if (result.canceled || !result.filePaths[0]) return false;
+            if ((await stat(result.filePaths[0])).size > 64 * 1024 * 1024) throw new Error('压缩包过大。');
+            await active.managed.core.ensure(await readFile(result.filePaths[0])); return true;
+          }
+          case 'network.read-config': {
+            const result = await dialog.showOpenDialog(window!, { properties: ['openFile'], filters: [{ name: 'Clash / Mihomo 配置', extensions: ['yaml', 'yml', 'json'] }] });
+            if (result.canceled || !result.filePaths[0]) return null;
+            if ((await stat(result.filePaths[0])).size > 2_000_000) throw new Error('配置文件超过 2 MB。');
+            return readFile(result.filePaths[0], 'utf8');
+          }
           case 'proxy.save': {
             const config = active.store.get();
             const profile = payload.profile;
             if (payload.credentials) { profile.credentialRef = `proxy:${profile.id}`; const credentials = z.object({ username: z.string().max(1000), password: z.string().max(1000) }).parse(payload.credentials); await vault.set(profile.credentialRef, JSON.stringify(credentials)); }
-            config.proxies = [...config.proxies.filter(p => p.id !== profile.id), profile]; await active.store.save(config); return true;
+            await active.store.update(current => { current.proxies = [...current.proxies.filter(p => p.id !== profile.id), profile]; }); return true;
           }
-          case 'proxy.default': { const config = active.store.get(); config.defaultProxy = payload; await active.store.save(config); return true; }
+          case 'proxy.default': { await active.store.update(config => { config.defaultProxy = payload; }); return true; }
           case 'client.preview': { const client = z.enum(['codex', 'claude']).parse(payload.client); return active.clients.plan(client, active.store.get(), active.gateway.address, await active.ensureClient(client), payload.model); }
-          case 'client.apply': return active.clients.apply(z.string().parse(payload.id), active.store.get());
-          case 'client.restore': return active.clients.restore(z.enum(['codex', 'claude']).parse(payload.client));
+          case 'client.copy-config': {
+            const { clipboard } = await import('electron'); clipboard.writeText(active.clients.export(z.string().parse(payload.id), z.enum(['native', 'json']).parse(payload.format))); return true;
+          }
+          case 'client.export-config': {
+            const format = z.enum(['native', 'json']).parse(payload.format); const client = z.enum(['codex', 'claude']).parse(payload.client);
+            const contents = active.clients.export(z.string().parse(payload.id), format);
+            const extension = format === 'native' && client === 'codex' ? 'toml' : 'json';
+            const result = await dialog.showSaveDialog(window!, { defaultPath: `${client}-model-bridge.${extension}`, filters: [{ name: '客户端配置', extensions: [extension] }] });
+            if (!result.canceled && result.filePath) await writeFile(result.filePath, contents, { mode: 0o600 }); return !result.canceled;
+          }
+          case 'client.copy-generic':
+          case 'client.export-generic': {
+            const model = z.string().parse(payload.model); const protocol = z.enum(['responses', 'messages', 'chat']).parse(payload.protocol);
+            if (!active.store.get().connections.some(c => c.enabled && c.models.some(m => m.enabled && `${c.id}/${m.id}` === model))) throw new Error('请先选择可用模型。');
+            const address = payload.address && active.gateway.lanAddresses().includes(payload.address) ? payload.address : active.gateway.address;
+            const contents = JSON.stringify({ base_url: address + (protocol === 'messages' ? '' : '/v1'), api_key: await active.ensureClient('generic'), model, protocol }, null, 2) + '\n';
+            if (operation === 'client.copy-generic') { const { clipboard } = await import('electron'); clipboard.writeText(contents); return true; }
+            const result = await dialog.showSaveDialog(window!, { defaultPath: 'model-bridge-agent.json', filters: [{ name: 'JSON 配置', extensions: ['json'] }] });
+            if (!result.canceled && result.filePath) await writeFile(result.filePath, contents, { mode: 0o600 }); return !result.canceled;
+          }
+          case 'client.apply': { const result = await active.clients.apply(z.string().parse(payload.id), active.store.get()); await active.localAccounts.scan(); return result; }
+          case 'client.restore': { const result = await active.clients.restore(z.enum(['codex', 'claude']).parse(payload.client)); await active.localAccounts.scan(); return result; }
           case 'client.copy-key': { const { clipboard } = await import('electron'); clipboard.writeText(await active.ensureClient('generic')); return true; }
+          case 'client.copy-address': {
+            const protocol = z.enum(['responses', 'messages', 'chat']).parse(payload.protocol);
+            const kind = z.enum(['base', 'endpoint']).parse(payload.kind);
+            const paths = { responses: '/v1/responses', messages: '/v1/messages', chat: '/v1/chat/completions' };
+            const address = payload.address && active.gateway.lanAddresses().includes(payload.address) ? payload.address : active.gateway.address;
+            const { clipboard } = await import('electron'); clipboard.writeText(address + (kind === 'endpoint' ? paths[protocol] : protocol === 'messages' ? '' : '/v1')); return true;
+          }
           case 'usage.export': { const result = await dialog.showSaveDialog(window!, { defaultPath: 'model-bridge-usage.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] }); if (!result.canceled && result.filePath) await writeFile(result.filePath, '\ufeff' + usageCsv(await active.usage.list(90))); return !result.canceled; }
           case 'app.autostart': { const enabled = z.boolean().parse(payload.enabled); app.setLoginItemSettings({ openAtLogin: enabled }); return true; }
           default: throw new Error('Unknown operation.');

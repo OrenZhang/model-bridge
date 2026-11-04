@@ -21,12 +21,17 @@ export class ConfigStore {
   get() { return structuredClone(this.current); }
   async save(value: unknown) {
     const next = ConfigSchema.parse(value);
+    return this.update(() => next);
+  }
+  async update(change: (current: Config) => Config | void) {
     const operation = this.writes.then(async () => {
+      const draft = this.get(); const next = ConfigSchema.parse(change(draft) ?? draft);
       await atomicWrite(path.join(this.directory, 'config.json'), JSON.stringify(next, null, 2));
       this.current = next;
+      return this.get();
     });
-    this.writes = operation.catch(() => {});
-    await operation;
+    this.writes = operation.then(() => {}, () => {});
+    return operation;
   }
 }
 export interface SecretStore { get(ref: string): Promise<string | undefined>; set?(ref: string, value: string): Promise<void>; }

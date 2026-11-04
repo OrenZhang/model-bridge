@@ -14,10 +14,10 @@
       <button data-page="overview" class="active"><span>◫</span>总览</button>
       <button data-page="connections"><span>⇄</span>账号与连接</button>
       <button data-page="models"><span>◇</span>模型目录</button>
-      <button data-page="clients"><span>⌘</span>接入客户端</button>
+      <button data-page="clients"><span>⌘</span>客户端与服务</button>
       <button data-page="usage"><span>▥</span>用量统计</button>
     </nav>
-    <div class="sidebar-bottom"><div class="local-badge"><i></i> 只在本机运行</div><p>账号留在本地<br>模型在你的工具里选择</p><small>v0.1.0 · ALPHA</small></div>
+    <div class="sidebar-bottom"><div class="local-badge"><i></i> 本地网关 · 自由连接</div><p>账号留在本地<br>模型在你的工具里选择</p><small>v0.1.0 · ALPHA</small></div>
   </aside>
   <main><header><div><div class="eyebrow">你的模型工作台</div><h1 id="page-title">总览</h1></div><div id="service-status" class="status"><i></i> 正在连接网关</div></header><div id="content"><div class="empty">正在读取本地服务…</div></div></main>
   <div id="toast" role="status" hidden></div>
@@ -26,8 +26,8 @@
     <label>显示名称<input name="name" placeholder="例如：我的 Kimi 账号" required maxlength="100" /></label>
     <div class="form-grid"><label>服务商<select name="provider"><option value="openai">ChatGPT / OpenAI</option><option value="kimi">Kimi</option><option value="minimax">MiniMax</option><option value="anthropic">Anthropic</option><option value="custom">自定义服务</option></select></label><label>接入方式<select name="auth"><option value="chatgpt-device">ChatGPT 设备码登录</option><option value="api-key">API Key</option><option value="none">本地服务（无密钥）</option></select></label></div>
     <div id="api-fields"><label>API Base URL<input name="baseUrl" type="url" placeholder="https://api.example.com/v1" /></label><label>API Key<input name="apiKey" type="password" autocomplete="off" placeholder="密钥加密保存在本机" /></label><label>服务支持的接口<select name="protocol"><option value="responses">Responses</option><option value="chat">Chat Completions</option><option value="messages">Messages</option><option value="all">三种接口均支持</option></select></label></div>
-    <details class="network-options"><summary>网络设置（可选）</summary><p class="hint">只影响此连接的登录、模型发现和请求。通常保持默认；需要独立代理时再设置。</p><label>此连接使用<select name="proxy"></select></label><button type="button" class="plain" data-action="add-proxy">添加独立代理</button><p class="hint">授权网页使用系统浏览器的网络。这里不修改系统代理，也不启动额外代理内核。</p></details>
-    <label>模型 ID（可选，每行一个）<textarea name="modelIds" rows="3" placeholder="留空后点击“同步模型”；不支持模型发现的服务可手动填写。"></textarea></label>
+    <details class="network-options"><summary>网络设置（可选）</summary><p class="hint">只影响此连接的登录、模型发现和请求。通常保持默认；需要时选择自己的订阅节点。</p><label>此连接使用<select name="proxy"></select></label><div class="row"><button type="button" class="plain" data-action="manage-networks">添加 / 管理代理订阅</button><button type="button" class="plain" data-action="add-proxy">手动填写代理地址</button></div><p class="hint">订阅由内置 mihomo 按需运行，不设置系统代理或 TUN。授权网页仍使用系统浏览器自身网络。</p></details>
+    <label>模型 ID（可选，每行一个）<textarea name="modelIds" rows="3" placeholder="配置或登录成功后自动获取；服务不提供模型目录时再手动填写。"></textarea></label>
     <p class="hint">添加连接后，模型会汇总到同一个目录。Codex 和其他客户端通过本地网关调用。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="connection-dialog">取消</button><button type="submit" class="primary">保存连接</button></div>
   </form></dialog>
@@ -45,6 +45,11 @@
     <p class="hint">请按服务商文档填写能力和价格。订阅账号可留空价格，不会把估算费用当作实际账单。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="model-dialog">取消</button><button type="submit" class="primary">保存模型</button></div>
   </form></dialog>
+  <dialog id="network-dialog" class="wide-dialog">
+    <div class="dialog-title"><div><div class="eyebrow">仅供选中的模型连接使用</div><h2>代理订阅与节点</h2></div><button class="icon-button" data-close="network-dialog">×</button></div>
+    <div id="network-core-status"></div><div id="network-profiles"></div>
+    <form id="network-form"><h3>添加订阅或本地配置</h3><label>名称<input name="name" required maxlength="100" placeholder="例如：我的订阅" /></label><label>来源<select name="source"><option value="subscription">Clash / Mihomo 订阅地址</option><option value="config">本地 YAML 配置</option></select></label><label id="subscription-field">HTTPS 订阅地址<input name="url" type="password" autocomplete="off" placeholder="订阅地址加密保存在本机" /></label><div id="network-config-fields" hidden><button type="button" class="secondary" data-action="read-network-config">选择配置文件</button><label>配置内容<textarea name="config" rows="5" placeholder="proxies: ..."></textarea></label></div><p class="hint">支持包含节点的 Clash / Mihomo YAML。仅导入节点，订阅中的系统路由、TUN、DNS 和监听设置不会应用。</p><div class="dialog-actions"><button class="primary" type="submit">保存并读取节点</button></div></form>
+  </dialog>
   <script src="./app.js"></script>
 </body>
 </html>

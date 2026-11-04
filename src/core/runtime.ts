@@ -7,23 +7,38 @@ import { UsageStore } from './usage.js';
 import { startGateway, tokenHash } from '../gateway/server.js';
 import { DeviceLogin } from '../auth/device-login.js';
 import { ClientConfiguration } from '../clients/configure.js';
+import { LocalCodexAccounts } from '../auth/local-codex.js';
+import { ManagedNetworks } from '../network/managed.js';
 
 export async function createRuntime(directory: string, secrets: SecretStore, home: string, systemProxy?: SystemProxyResolver, codexExecutable?: string) {
   const store = await new ConfigStore(directory).load();
   const usage = new UsageStore(path.join(directory, 'usage'));
-  const network = new Network(() => store.get(), secrets, systemProxy);
-  const clients = new ClientConfiguration(home, directory);
+  let managed: ManagedNetworks;
+  const network = new Network(() => store.get(), secrets, systemProxy, id => managed.proxyUrl(id));
+  const clients = new ClientConfiguration(home, directory, process.env.CODEX_HOME ? path.resolve(process.env.CODEX_HOME) : undefined);
+  const localAccounts = new LocalCodexAccounts(home, process.env.CODEX_HOME, directory, () => store.get(), secrets);
   const logins = new Map<string, { signature: string; login: DeviceLogin }>();
+  const discoveries = new Map<string, { phase: 'loading' | 'ready' | 'error'; message?: string; count?: number }>();
+  const discoveryTasks = new Map<string, Promise<unknown>>();
+  const rediscover = new Set<string>();
+  const keyVersions = new Map<string, number>();
+  let closed = false;
   function login(connection: Connection) {
-    const signature = JSON.stringify({ auth: connection.auth, proxy: connection.proxy, defaultProxy: store.get().defaultProxy, proxies: store.get().proxies });
+    const signature = JSON.stringify({ auth: connection.auth, proxy: connection.proxy, defaultProxy: store.get().defaultProxy, proxies: store.get().proxies, networks: store.get().networkProfiles });
     const previous = logins.get(connection.id);
     if (previous && previous.signature !== signature) { previous.login.close(); logins.delete(connection.id); }
-    if (!logins.has(connection.id)) logins.set(connection.id, { signature, login: new DeviceLogin(path.join(directory, 'accounts', connection.id, 'codex'), connection, network, codexExecutable) });
+    if (!logins.has(connection.id)) {
+      const helper = new DeviceLogin(path.join(directory, 'accounts', connection.id, 'codex'), connection, network, codexExecutable);
+      let authenticated = false;
+      helper.on('state', state => { const newlyAuthenticated = state.phase === 'authenticated' && !authenticated; authenticated = state.phase === 'authenticated'; if (newlyAuthenticated && !discoveryTasks.has(connection.id)) scheduleDiscovery(connection.id); });
+      logins.set(connection.id, { signature, login: helper });
+    }
     return logins.get(connection.id)!.login;
   }
   let usageWriteFailed = false;
-  const gateway = await startGateway({ config: () => store.get(), secrets, network, usage,
-    chatgptCredentials: c => login(c).credentials(), onUsageError: () => { usageWriteFailed = true; } });
+  const gatewayOptions = { config: () => store.get(), secrets, network, usage, chatgptCredentials: (c: Connection) => login(c).credentials(), onUsageError: () => { usageWriteFailed = true; } };
+  let gateway = await startGateway(gatewayOptions);
+  managed = new ManagedNetworks(directory, store, secrets, network, () => gateway.activeRequests() === 0 && discoveryTasks.size === 0 && ![...logins.values()].some(value => ['starting', 'waiting'].includes(value.login.state.phase)));
   async function ensureClient(id: 'codex' | 'claude' | 'generic') {
     const ref = `client:${id}`; let token = await secrets.get(ref);
     if (!token) {
@@ -33,21 +48,24 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     const config = store.get();
     const existing = config.clients.find(c => c.id === id);
     if (!existing || existing.tokenHash !== tokenHash(token)) {
-      config.clients = config.clients.filter(c => c.id !== id);
-      config.clients.push({ id, name: id === 'claude' ? 'Claude Code' : id === 'codex' ? 'Codex' : 'Other agents', tokenHash: tokenHash(token) });
-      await store.save(config);
+      await store.update(current => { current.clients = current.clients.filter(c => c.id !== id); current.clients.push({ id, name: id === 'claude' ? 'Claude Code' : id === 'codex' ? 'Codex' : 'Other agents', tokenHash: tokenHash(token!) }); });
     }
     return token;
   }
-  async function saveConnection(raw: unknown, apiKey?: string) {
+  async function saveConnection(raw: unknown, apiKey?: string, autoDiscover = false) {
     const connection = ConnectionSchema.parse(raw);
-    const config = store.get(); const previous = config.connections.find(c => c.id === connection.id);
-    if (!connection.secretRef && previous?.secretRef) connection.secretRef = previous.secretRef;
-    if (apiKey) { if (!secrets.set) throw new Error('Credentials are read-only.'); connection.secretRef = `connection:${connection.id}`; await secrets.set(connection.secretRef, apiKey); }
-    config.connections = [...config.connections.filter(c => c.id !== connection.id), connection];
-    await store.save(config); await clients.updateCatalog(config); return connection;
+    if (apiKey) { if (!secrets.set) throw new Error('Credentials are read-only.'); connection.secretRef = `connection:${connection.id}`; await secrets.set(connection.secretRef, apiKey); keyVersions.set(connection.id, (keyVersions.get(connection.id) ?? 0) + 1); }
+    const config = await store.update(current => {
+      const previous = current.connections.find(c => c.id === connection.id);
+      if (!connection.secretRef && previous?.secretRef) connection.secretRef = previous.secretRef;
+      current.connections = [...current.connections.filter(c => c.id !== connection.id), connection];
+    });
+    await clients.updateCatalog(config);
+    if (autoDiscover && (connection.auth !== 'chatgpt-device' || logins.get(connection.id)?.login.state.phase === 'authenticated')) scheduleDiscovery(connection.id);
+    return connection;
   }
-  async function discover(id: string) {
+  async function fetchModels(id: string) {
+    const keyVersion = keyVersions.get(id) ?? 0;
     const config = store.get(); const connection = config.connections.find(c => c.id === id);
     if (!connection) throw new Error('Connection not found.');
     let found: any[];
@@ -61,19 +79,52 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       if (key) { headers.authorization = `Bearer ${key}`; headers['x-api-key'] = key; headers['anthropic-version'] = '2023-06-01'; }
       const response = await network.request(connection, connection.baseUrl.replace(/\/+$/, '') + '/models', { headers, signal: AbortSignal.timeout(15000) });
       if (!response.ok) { await response.body?.cancel(); throw new Error(`Model discovery returned HTTP ${response.status}. Add model IDs manually if this service has no model-list endpoint.`); }
-      const data = await response.json() as any; found = (data.data ?? data.models ?? []).map((m: any) => ({ id: m.id ?? m.name, name: m.display_name ?? m.id ?? m.name }));
+      const data = await response.json() as any; const list = data.data ?? data.models;
+      if (!Array.isArray(list)) throw new Error('服务商没有返回可识别的模型目录，可手动添加模型 ID。');
+      found = list.map((m: any) => ({ id: m.id ?? m.name, name: m.display_name ?? m.id ?? m.name }));
     }
-    const defaultProtocols = connection.auth === 'chatgpt-device' ? ['responses'] : connection.provider === 'kimi' ? ['responses', 'messages', 'chat'] : connection.provider === 'minimax' || connection.provider === 'anthropic' ? ['messages'] : ['chat'];
-    const existing = new Map(connection.models.map(m => [m.upstreamId, m]));
-    connection.models = found.filter(m => typeof m.id === 'string').slice(0, 300).map(m => existing.get(m.id) ?? ModelSchema.parse({ id: m.id, name: m.name, upstreamId: m.id, protocols: defaultProtocols, ...(m.reasoning ? { reasoning: m.reasoning } : {}), images: m.images ?? false }));
-    await saveConnection(connection); return connection.models;
+    found = found.filter(m => typeof m.id === 'string' && m.id.length > 0).slice(0, 300);
+    if (!found.length) throw new Error('服务商返回的模型列表为空，请检查账号权限或手动添加模型 ID。');
+    const defaultProtocols = connection.models[0]?.protocols ?? (connection.auth === 'chatgpt-device' || connection.provider === 'openai' ? ['responses'] : connection.provider === 'kimi' ? ['responses', 'messages', 'chat'] : connection.provider === 'minimax' || connection.provider === 'anthropic' ? ['messages'] : ['chat']);
+    if (closed) return [];
+    const updated = await store.update(current => {
+      const latest = current.connections.find(c => c.id === id);
+      if (!latest || latest.baseUrl !== connection.baseUrl || latest.auth !== connection.auth || latest.secretRef !== connection.secretRef || (keyVersions.get(id) ?? 0) !== keyVersion) throw new Error('连接已更改，正在重新获取模型。');
+      const existing = new Map(latest.models.map(m => [m.upstreamId, m]));
+      for (const m of found) if (!existing.has(m.id)) existing.set(m.id, ModelSchema.parse({ id: m.id, name: m.name, upstreamId: m.id, protocols: defaultProtocols, ...(m.reasoning ? { reasoning: m.reasoning } : {}), images: m.images ?? false }));
+      latest.models = [...existing.values()];
+    });
+    await clients.updateCatalog(updated); return updated.connections.find(c => c.id === id)!.models;
+  }
+  function discover(id: string): Promise<any> {
+    if (discoveryTasks.has(id)) return discoveryTasks.get(id)!;
+    discoveries.set(id, { phase: 'loading' });
+    const task = Promise.resolve().then(() => fetchModels(id)).then(models => { discoveries.set(id, { phase: 'ready', count: models.length }); return models; }, error => { discoveries.set(id, { phase: 'error', message: error instanceof Error ? error.message : '自动获取失败，可重试或手动填写模型 ID。' }); throw error; }).finally(() => { discoveryTasks.delete(id); if (rediscover.delete(id)) scheduleDiscovery(id); });
+    discoveryTasks.set(id, task); return task;
+  }
+  function scheduleDiscovery(id: string) {
+    if (closed) return;
+    if (discoveryTasks.has(id)) { rediscover.add(id); return; }
+    void discover(id).catch(() => {});
   }
   await clients.updateCatalog(store.get());
-  return { store, network, usage, clients, gateway, ensureClient, saveConnection, discover,
+  let changingListener = false;
+  return { store, network, usage, clients, get gateway() { return gateway; }, ensureClient, saveConnection, discover, scheduleDiscovery, localAccounts, managed,
+    async setLanAccess(enabled: boolean) {
+      if (changingListener || gateway.activeRequests() || discoveryTasks.size) throw new Error('正在处理请求，请完成后再更改服务监听设置。');
+      changingListener = true; const previous = store.get().listenHost;
+      try {
+        await store.update(config => { config.listenHost = enabled ? '0.0.0.0' : '127.0.0.1'; });
+        try { await gateway.close(); gateway = await startGateway(gatewayOptions); }
+        catch (error) { await store.update(config => { config.listenHost = previous; }); gateway = await startGateway(gatewayOptions); throw error; }
+      } finally { changingListener = false; }
+    },
+    async importLocalAccount(id: string) { const connection = await localAccounts.importAccount(id); await saveConnection(connection); scheduleDiscovery(connection.id); await localAccounts.scan(); return connection.id; },
+    discoveryStates: () => Object.fromEntries(discoveries),
     loginFor(id: string) { const connection = store.get().connections.find(c => c.id === id && c.auth === 'chatgpt-device'); if (!connection) throw new Error('ChatGPT connection not found.'); return login(connection); },
     loginStates() { return Object.fromEntries([...logins.entries()].map(([id, value]) => [id, value.login.state])); },
     usageWriteFailed: () => usageWriteFailed,
-    async close() { for (const { login } of logins.values()) login.close(); await gateway.close(); },
+    async close() { closed = true; for (const { login } of logins.values()) login.close(); await gateway.close(); await managed.close(); await Promise.allSettled(discoveryTasks.values()); },
   };
 }
 export type Runtime = Awaited<ReturnType<typeof createRuntime>>;

@@ -4,13 +4,18 @@ import { BridgeError } from './config.js';
 import type { SecretStore } from './store.js';
 
 export type SystemProxyResolver = (url: string) => Promise<string | undefined>;
+export type ManagedProxyResolver = (profileId: string) => Promise<string>;
 export class Network {
   private agents = new Map<string, Dispatcher>();
-  constructor(private config: () => Config, private secrets: SecretStore, private systemProxy?: SystemProxyResolver) {}
+  constructor(private config: () => Config, private secrets: SecretStore, private systemProxy?: SystemProxyResolver, private managedProxy?: ManagedProxyResolver) {}
   async proxyUrl(connection: Connection, destination: string, forSubprocess = false): Promise<string | undefined> {
     const config = this.config();
     const choice = connection.proxy.mode === 'inherit' ? config.defaultProxy : connection.proxy;
     if (choice.mode === 'direct') return undefined;
+    if (choice.mode === 'managed') {
+      if (!this.managedProxy) throw new BridgeError(503, 'subscription_unavailable', '内置订阅网络当前不可用。');
+      return this.managedProxy(choice.profileId);
+    }
     if (choice.mode === 'system') {
       if (this.systemProxy) return this.systemProxy(destination);
       if (forSubprocess) return process.env.https_proxy || process.env.HTTPS_PROXY || process.env.all_proxy || process.env.ALL_PROXY || process.env.http_proxy || process.env.HTTP_PROXY;

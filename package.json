@@ -9,7 +9,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "dev": "tsx src/cli.ts",
+    "dev": "npm run build && node dist/cli.js",
     "build": "tsc && tsc -p tsconfig.ui.json && node scripts/build-ui.mjs",
     "start": "node dist/cli.js",
     "desktop": "npm run build && electron .",
@@ -18,9 +18,12 @@
     "package": "npm run build && electron-builder --publish never"
   },
   "dependencies": {
+    "@napi-rs/keyring": "^2.1.2",
     "@openai/codex": "0.144.1",
+    "fflate": "^0.8.2",
     "smol-toml": "^1.4.2",
     "undici": "8.12.3",
+    "yaml": "^2.8.1",
     "zod": "^4.1.13"
   },
   "devDependencies": {
@@ -33,7 +36,11 @@
     "vitest": "^4.0.18"
   },
   "build": {
-    "asarUnpack": ["node_modules/@openai/**/*"],
+    "asarUnpack": [
+      "node_modules/@openai/**/*",
+      "node_modules/@napi-rs/**/*",
+      "dist/network/runner.js"
+    ],
     "appId": "io.github.orenzhang.modelbridge",
     "productName": "Model Bridge",
     "directories": {

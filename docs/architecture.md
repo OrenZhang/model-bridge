@@ -23,6 +23,7 @@ flowchart LR
 - `clients/`：配置计划、旧文件散列校验、备份与冲突恢复。
 - `desktop/`：进程生命周期、系统凭据加密、系统代理解析、IPC。
 - `ui/`：中文工作台，真实空状态，连接/模型/客户端/统计；网络为连接内可选项。
+- `network/`：订阅节点解析、官方 mihomo 内核校验、受管进程和断开父进程后的回收。原始订阅全局配置不进入运行时，只重建节点、指定节点规则及本机认证端口。
 
 ## 关键决策
 
@@ -48,6 +49,14 @@ OpenAI 模型列表不足以驱动 Codex 的模型选择器。生成完整 Codex
 
 配置预览时计算旧文件散列，应用时再次核对；恢复时只覆盖与当时写入结果相同的文件，否则保留用户后续修改并要求手工合并。原值被保留，TOML 注释和排版不保证保留。
 
+### 账号复用、模型发现与局域网
+
+本机检测只覆盖默认 Codex 目录和显式 `CODEX_HOME`，读取已知 auth 文件或直接系统 keyring 条目。展示数据不包含 token；用户点击复用后保存到账号的独立目录。原客户端配置与原凭据不被改写。复制授权的刷新冲突仍需真实账号回归。
+
+配置保存和登录完成触发模型发现，按连接去重；失败保留已有目录。配置更新与目录写入排队执行，避免并发发现丢失其他连接。
+
+局域网开关只改变模型网关监听地址，管理操作仍走本机 IPC。`0.0.0.0` 模式继续校验客户端密钥与浏览器 Origin，界面展示实际网卡地址。mihomo 内核不会因此向局域网开放。
+
 ### 统计
 
 只保存请求元数据、服务商返回的用量和本地估算。流式结束前断开不算成功；没有 usage 时保持未知。图表和聚合覆盖所选时间内全部记录，明细限制最近 200 条。
@@ -59,5 +68,7 @@ OpenAI 模型列表不足以驱动 Codex 的模型选择器。生成完整 Codex
 - [官方 Codex 源码](https://github.com/openai/codex)
 - [MiniMax Anthropic 接口与 thinking 历史要求](https://platform.minimax.io/docs/api-reference/text-anthropic-api)
 - [Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)
+- [Mihomo 官方版本与校验值](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.32)
+- [Mihomo 网络配置](https://wiki.metacubex.one/en/config/general/)
 
 协议与授权会变化；正式发版前应对锁定的客户端和服务商版本执行验收，而非仅依赖文档推断。

@@ -1,6 +1,6 @@
 # Model Bridge
 
-一个本机运行的模型入口，把 ChatGPT、Kimi、MiniMax 和兼容服务接入 Codex、Claude Code 与其他 Agent。
+一个在本机运行、可选向局域网提供服务的模型入口，把 ChatGPT、Kimi、MiniMax 和兼容服务接入 Codex、Claude Code 与其他 Agent。
 
 **当前版本：`0.1.0-alpha.1`，开发预览。** 已有可运行桌面界面和网关；真实订阅账号的完整联调与 Windows 实机验收尚未完成。兼容范围见下表，不能将接口存在等同于所有模型功能均可用。
 
@@ -12,11 +12,15 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 其他 Agent ─ Chat Completions ──┘                                      └ 可选独立代理
 ```
 
-添加连接 → 登录或填写 API Key → 同步/配置模型 → 预览并应用客户端配置 → 在客户端选择模型。
+添加连接或复用本机 Codex 账号 → 登录或填写 API Key → 自动获取模型 → 预览并应用客户端配置 → 在客户端选择账号和模型。获取失败时保留已有目录，并提供重新获取和手工填写。
+
+“客户端与服务”提供 Codex、Claude Code、Kimi、MiniMax、其他 Agent 五个 Tab，每项分为“账号与模型”和“接入配置”。Kimi / MiniMax 页可选择生成 Codex、Claude Code 或通用 Agent 配置，目前不写入它们各自 CLI 的配置文件。
+
+选择默认账号 / 模型后自动生成配置预览，支持一键写入、复制和导出。Codex 原生文件为 TOML，Claude Code 为 JSON；Codex 的“复制 JSON”提供配置数据交换格式，不能直接当作 `config.toml` 使用。复制与导出只包含本网关所需字段和本地访问密钥，不包含原文件中其他服务的密钥。连续切换模型后仍可恢复接入前的原始配置。
 
 所有连接始终经过同一网关。模型 ID 为 `连接ID/模型ID`，同名模型、多账号不会互相覆盖。请求明确指定模型，未知模型返回错误；切换不会把正在进行的请求转到另一个账号。
 
-网络设置位于每个连接的可选区域。通常使用默认网络；需要时选择直连、系统网络或独立 HTTP / HTTPS / SOCKS5 代理。没有必开的代理页面或额外路由开关，也不会修改系统代理。当前不包含代理内核、订阅节点管理或 VPN。
+网络设置位于每个连接的可选区域。可导入自己的 Clash / Mihomo YAML 订阅或本地配置，选择节点后由官方 mihomo 内核按需运行；只处理绑定此订阅的模型连接，不设置系统代理、TUN 或系统 DNS。也保留默认网络、直连和手动 HTTP / HTTPS / SOCKS5 代理。
 
 ## 已实现与边界
 
@@ -27,8 +31,11 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 | Kimi / MiniMax / Anthropic / 自定义服务 | API Key 与手工模型配置；模型发现取决于服务商是否提供列表接口 |
 | Responses / Messages / Chat Completions | 同协议透传，跨协议文本和 JSON 工具调用转换；流式与非流式调用、取消、错误处理 |
 | Codex 模型目录 | 生成专用目录文件和配置；已用真实 Codex `0.144.1` 的 `model/list` 验证多个服务商同时可见 |
+| 已有 Codex 账号 | 检测默认目录及 `CODEX_HOME`，识别文件和直接系统 keyring 登录；复用时保存独立副本，账号凭据不返回界面 |
 | Claude Code 配置 | 预览、备份、写入与恢复；默认模型可在 Claude Code 使用完整网关模型 ID 切换，未验证其所有版本的模型选择器行为 |
 | 账号网络 | HTTP / HTTPS / SOCKS5、系统网络、直连；授权轮询、模型发现、推理采用同一连接设置；浏览器授权页采用浏览器自身网络 |
+| 代理订阅 | Mihomo `v1.19.32`、HTTPS 订阅/本地 YAML、节点选择、更新订阅、加密保存、官方压缩包 SHA-256 校验；已运行真实内核验证指定节点与模型发现 |
+| 局域网 | 默认 `127.0.0.1`；可切换监听 `0.0.0.0`，展示网卡 IP，所有模型接口仍要求访问密钥 |
 | 用量统计 | 请求数、状态、输入/输出/缓存 Token、延迟、首字节时间、配置价格后的估算费用；按客户端/服务商/账号/模型筛选、CSV 导出 |
 | 凭据与配置 | API Key、代理密码、本地访问密钥由系统密钥服务加密；客户端配置变更前备份并检测冲突 |
 
@@ -40,6 +47,8 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 - Kimi / MiniMax 暂不提供各自的订阅 OAuth 登录。套餐剩余额度/官方账单未接入，本地统计只覆盖经过本网关的请求。
 - 未返回的用量记为未知，不从文本猜测 Token 数；费用为配置价格下的估算，不是订阅账单。线上协议必填用量字段可能使用零占位，本机统计保留未知状态。
 - 未提供签名/公证的正式安装包。当前推荐开发者从源码运行；不要把 CI 构建成功当作 Windows 实机验收。
+- 本机账号复用只读取已知 Codex 登录格式；新版 secrets keyring 格式可能需要设备码重新授权。复制登录后与原客户端共用同一授权来源，令牌轮换后可能需要重新登录。
+- 代理订阅当前支持含 `proxies` 的 Clash / Mihomo YAML，不处理裸 URI/base64 订阅、远程 `proxy-providers` 链或任意插件配置；不支持的字段会报错。订阅内容和地址保存在加密凭据库，运行时生成的节点配置仅保存在私有临时目录。
 
 ## 从源码运行
 
@@ -59,6 +68,12 @@ npm run check
 npm test
 npm run build
 npm run package
+```
+
+真实内核检查（需下载官方 mihomo，使用模拟节点，不使用模型账号）：
+
+```sh
+node scripts/smoke-managed-network.mjs
 ```
 
 打包使用当前系统架构；macOS 生成 DMG/ZIP，Windows 生成 NSIS。官方 Codex helper 随应用打包，不要求用户预先安装 Codex CLI。跨架构打包需额外检查对应 helper 是否被包含。
@@ -100,7 +115,17 @@ npm run dev
 | `POST /v1/messages` | Anthropic Messages |
 | `POST /v1/chat/completions` | Chat Completions |
 
-除健康检查外均要求本地访问密钥。Codex、Claude Code 和其他 Agent 分别使用独立访问密钥；本地密钥不会发往服务商。HTTP 只监听 `127.0.0.1`，拒绝浏览器 Origin；管理操作仅通过桌面 IPC 完成。
+除健康检查外均要求本地访问密钥。Codex、Claude Code 和其他 Agent 分别使用独立访问密钥；本地密钥不会发往服务商。HTTP 默认监听 `127.0.0.1`；开启局域网模式后监听 `0.0.0.0`。两种模式均拒绝浏览器 Origin，管理操作仅通过桌面 IPC 完成。
+
+### 可复制的客户端基础地址
+
+| 客户端协议 | 本机 Base URL | 完整请求地址 |
+| --- | --- | --- |
+| Responses / Codex / OpenAI SDK | `http://127.0.0.1:18765/v1` | `http://127.0.0.1:18765/v1/responses` |
+| Messages / Claude Code / Anthropic SDK | `http://127.0.0.1:18765` | `http://127.0.0.1:18765/v1/messages` |
+| Chat Completions / OpenAI SDK | `http://127.0.0.1:18765/v1` | `http://127.0.0.1:18765/v1/chat/completions` |
+
+总览分别提供基础地址、完整地址和访问密钥的复制入口。允许局域网访问后，其他设备用本机实际网卡 IP 替换 `127.0.0.1`；`0.0.0.0` 是监听地址，不是客户端目标地址。同网段设备还需要系统防火墙允许端口。此模式为 HTTP，请只用于可信局域网。
 
 ## 数据存储
 

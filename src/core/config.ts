@@ -8,6 +8,7 @@ export const ProxyChoiceSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('direct') }),
   z.object({ mode: z.literal('system') }),
   z.object({ mode: z.literal('proxy'), profileId: identifier }),
+  z.object({ mode: z.literal('managed'), profileId: identifier }),
 ]);
 export type ProxyChoice = z.infer<typeof ProxyChoiceSchema>;
 export const ModelSchema = z.object({
@@ -42,19 +43,23 @@ export const ConnectionSchema = z.object({
 export type Connection = z.infer<typeof ConnectionSchema>;
 export const ConfigSchema = z.object({
   version: z.literal(1).default(1), port: z.number().int().min(0).max(65535).default(18765),
+  listenHost: z.enum(['127.0.0.1', '0.0.0.0']).default('127.0.0.1'),
   defaultProxy: ProxyChoiceSchema.default({ mode: 'system' }),
   proxies: z.array(z.object({ id: identifier, name: z.string().min(1),
     url: z.string().url().refine(v => { const u = new URL(v); return ['http:', 'https:', 'socks5:', 'socks:'].includes(u.protocol) && !u.username && !u.password && !u.search && !u.hash && ['', '/'].includes(u.pathname); }, 'Proxy URL must not contain credentials or a path.'),
     credentialRef: z.string().optional(),
   })).default([]),
   connections: z.array(ConnectionSchema).default([]),
+  networkProfiles: z.array(z.object({ id: identifier, name: z.string().min(1).max(100), source: z.enum(['subscription', 'config']), nodes: z.array(z.string()).min(1), selected: z.string(), secretRef: z.string(), updatedAt: z.string() })).default([]),
   clients: z.array(z.object({ id: identifier, name: z.string().min(1), tokenHash: z.string().regex(/^[a-f0-9]{64}$/) })).default([]),
 }).superRefine((config, ctx) => {
-  for (const [name, entries] of Object.entries({ connections: config.connections, proxies: config.proxies, clients: config.clients }))
+  for (const [name, entries] of Object.entries({ connections: config.connections, proxies: config.proxies, networkProfiles: config.networkProfiles, clients: config.clients }))
     if (new Set(entries.map(e => e.id)).size !== entries.length) ctx.addIssue({ code: 'custom', message: `Duplicate ${name} IDs.` });
   if (config.defaultProxy.mode === 'inherit') ctx.addIssue({ code: 'custom', message: 'The global proxy cannot inherit itself.' });
   for (const choice of [config.defaultProxy, ...config.connections.map(c => c.proxy)])
     if (choice.mode === 'proxy' && !config.proxies.some(p => p.id === choice.profileId)) ctx.addIssue({ code: 'custom', message: 'Selected proxy does not exist.' });
+    else if (choice.mode === 'managed' && !config.networkProfiles.some(p => p.id === choice.profileId)) ctx.addIssue({ code: 'custom', message: 'Selected subscription does not exist.' });
+  for (const profile of config.networkProfiles) if (!profile.nodes.includes(profile.selected)) ctx.addIssue({ code: 'custom', message: 'Selected subscription node does not exist.' });
 });
 export type Config = z.infer<typeof ConfigSchema>;
 export const emptyConfig = (): Config => ConfigSchema.parse({});

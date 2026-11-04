@@ -3,6 +3,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { networkInterfaces } from 'node:os';
 import { ConfigSchema, type Protocol } from '../src/core/config.js';
 import { Network } from '../src/core/network.js';
 import { UsageStore } from '../src/core/usage.js';
@@ -32,7 +33,7 @@ function stream(protocol: Protocol, res: ServerResponse, tool = false, complete 
   }
   res.end();
 }
-async function setup(upstream: Protocol, opts: { tool?: boolean; complete?: boolean; proxy?: boolean } = {}) {
+async function setup(upstream: Protocol, opts: { tool?: boolean; complete?: boolean; proxy?: boolean; listenHost?: '127.0.0.1' | '0.0.0.0' } = {}) {
   const requests: { body: any; headers: any }[] = [];
   const upstreamServer = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
@@ -45,6 +46,7 @@ async function setup(upstream: Protocol, opts: { tool?: boolean; complete?: bool
   cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const config = ConfigSchema.parse({ port: 0, clients: [{ id: 'codex', name: 'Codex', tokenHash: tokenHash('gateway-test-key') }], connections: [{ id: 'account', name: 'Test', provider: 'custom', auth: 'api-key', baseUrl: `http://127.0.0.1:${(upstreamServer.address() as any).port}/v1`, secretRef: 'key', models: [{ id: 'model', name: 'Model', upstreamId: 'vendor-model', protocols: [upstream], price: { input: 1, output: 2, cachedInput: 0.1 } }] }] });
   const secrets = { async get() { return 'upstream-test-key'; } };
+  config.listenHost = opts.listenHost ?? '127.0.0.1';
   const network = new Network(() => config, secrets);
   const usage = new UsageStore(directory);
   const gateway = await startGateway({ config: () => config, secrets, network, usage }); cleanup.push(() => gateway.close());
@@ -100,5 +102,14 @@ describe('gateway protocol matrix', () => {
     const { gateway, requests } = await setup('chat');
     const response = await send(gateway.address, 'responses', { ...input('responses'), model: 'missing/model' });
     expect(response.status).toBe(404); expect(requests).toHaveLength(0);
+  });
+  it('LAN mode exposes interface addresses and still requires a client key', async () => {
+    const { gateway } = await setup('chat', { listenHost: '0.0.0.0' });
+    expect(gateway.lanAddresses().every(address => !address.includes('0.0.0.0'))).toBe(true);
+    const ip = Object.values(networkInterfaces()).flat().find(item => item?.family === 'IPv4' && !item.internal)?.address;
+    const address = ip ? `http://${ip}:${new URL(gateway.address).port}` : gateway.address;
+    expect((await fetch(address + '/v1/models')).status).toBe(401);
+    expect((await fetch(address + '/v1/models', { headers: { authorization: 'Bearer gateway-test-key' } })).status).toBe(200);
+    expect((await fetch(address + '/v1/models', { headers: { authorization: 'Bearer gateway-test-key', origin: 'https://attacker.invalid' } })).status).toBe(403);
   });
 });
