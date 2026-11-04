@@ -40,9 +40,13 @@ export interface GatewayOptions {
 }
 export async function startGateway(options: GatewayOptions) {
   const inflight = new Set<AbortController>();
+  const handlers = new Set<Promise<void>>();
   const reasoningVault = options.reasoningVault ?? new ReasoningVault();
   let address = '';
-  const server = createServer((req, res) => { void handle(req, res); });
+  const server = createServer((req, res) => {
+    const pending = handle(req, res); handlers.add(pending);
+    void pending.finally(() => handlers.delete(pending)).catch(() => {});
+  });
   server.requestTimeout = 30000; server.headersTimeout = 15000;
   async function handle(req: IncomingMessage, res: ServerResponse) {
     let url: URL;
@@ -179,5 +183,12 @@ export async function startGateway(options: GatewayOptions) {
   const port = (server.address() as AddressInfo).port;
   return { address, activeRequests: () => inflight.size,
     lanAddresses: () => options.config().listenHost === '0.0.0.0' ? [...new Set(Object.values(networkInterfaces()).flatMap(values => (values ?? []).filter(item => item.family === 'IPv4' && !item.internal).map(item => `http://${item.address}:${port}`)))] : [],
-    async close() { for (const controller of inflight) controller.abort(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await options.network.close(); } };
+    async close() {
+      for (const controller of inflight) controller.abort();
+      server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+      // HTTP completion precedes each handler's final usage write. Finish those
+      // writes before quitting, rebinding the listener, or removing test data.
+      await Promise.allSettled(handlers);
+      await options.network.close();
+    } };
 }
