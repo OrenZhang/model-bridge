@@ -1,0 +1,36 @@
+import { expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { mkdtemp, rm } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { ConfigSchema } from '../src/core/config.js';
+import { ClientConfiguration } from '../src/clients/configure.js';
+import { codexBinary } from '../src/auth/codex-binary.js';
+
+it('the bundled Codex loads all providers from the generated catalog without signing in', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mb-codex-catalog-'));
+  const config = ConfigSchema.parse({ connections: ['kimi', 'minimax'].map(provider => ({ id: provider, name: provider, provider, auth: 'none', baseUrl: 'http://127.0.0.1:1/v1', models: [{ id: 'test-model', name: `${provider} Test`, upstreamId: 'test-model', protocols: ['chat'] }] })) });
+  const configuration = new ClientConfiguration(root, path.join(root, 'data'));
+  const plan = await configuration.plan('codex', config, 'http://127.0.0.1:1', 'isolated-test-key');
+  await configuration.apply(plan.id, config);
+  const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: path.join(root, '.codex') };
+  for (const key of ['OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'OPENAI_BASE_URL', 'OPENAI_IDENTITY_TOKEN_FILE']) delete env[key];
+  const child = spawn(codexBinary(), ['app-server', '--listen', 'stdio://'], { env, stdio: 'pipe', windowsHide: true });
+  child.stderr.resume();
+  const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>(); let id = 0;
+  const lines = createInterface({ input: child.stdout });
+  lines.on('line', line => { try { const message = JSON.parse(line); const p = pending.get(message.id); if (!p) return; pending.delete(message.id); if (message.error) p.reject(new Error(JSON.stringify(message.error))); else p.resolve(message.result); } catch {} });
+  child.on('error', error => { for (const p of pending.values()) p.reject(error); });
+  child.on('exit', () => { for (const p of pending.values()) p.reject(new Error('Codex exited before returning its model catalog.')); });
+  const rpc = (method: string, params: any) => new Promise<any>((resolve, reject) => { const requestId = ++id; pending.set(requestId, { resolve, reject }); child.stdin.write(JSON.stringify({ id: requestId, method, params }) + '\n'); });
+  try {
+    await rpc('initialize', { clientInfo: { name: 'model_bridge_test', version: '0.1.0' } });
+    child.stdin.write(JSON.stringify({ method: 'initialized' }) + '\n');
+    const catalog = await rpc('model/list', { includeHidden: false });
+    expect(catalog.data.map((model: any) => model.model)).toEqual(expect.arrayContaining(['kimi/test-model', 'minimax/test-model']));
+  } finally {
+    const exit = new Promise<void>(resolve => child.once('exit', () => resolve()));
+    child.kill(); await exit; lines.close(); await rm(root, { recursive: true, force: true });
+  }
+}, 30000);

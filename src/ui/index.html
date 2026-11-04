@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>Model Bridge</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-mark">m<span>↗</span></div><div>Model Bridge<small>LOCAL MODEL GATEWAY</small></div></div>
+    <nav>
+      <button data-page="overview" class="active"><span>◫</span>总览</button>
+      <button data-page="connections"><span>⇄</span>账号与连接</button>
+      <button data-page="models"><span>◇</span>模型目录</button>
+      <button data-page="clients"><span>⌘</span>接入客户端</button>
+      <button data-page="usage"><span>▥</span>用量统计</button>
+    </nav>
+    <div class="sidebar-bottom"><div class="local-badge"><i></i> 只在本机运行</div><p>账号留在本地<br>模型在你的工具里选择</p><small>v0.1.0 · ALPHA</small></div>
+  </aside>
+  <main><header><div><div class="eyebrow">你的模型工作台</div><h1 id="page-title">总览</h1></div><div id="service-status" class="status"><i></i> 正在连接网关</div></header><div id="content"><div class="empty">正在读取本地服务…</div></div></main>
+  <div id="toast" role="status" hidden></div>
+  <dialog id="connection-dialog"><form id="connection-form">
+    <div class="dialog-title"><div><div class="eyebrow">连接你的模型</div><h2>添加账号或服务</h2></div><button type="button" class="icon-button" data-close="connection-dialog">×</button></div>
+    <label>显示名称<input name="name" placeholder="例如：我的 Kimi 账号" required maxlength="100" /></label>
+    <div class="form-grid"><label>服务商<select name="provider"><option value="openai">ChatGPT / OpenAI</option><option value="kimi">Kimi</option><option value="minimax">MiniMax</option><option value="anthropic">Anthropic</option><option value="custom">自定义服务</option></select></label><label>接入方式<select name="auth"><option value="chatgpt-device">ChatGPT 设备码登录</option><option value="api-key">API Key</option><option value="none">本地服务（无密钥）</option></select></label></div>
+    <div id="api-fields"><label>API Base URL<input name="baseUrl" type="url" placeholder="https://api.example.com/v1" /></label><label>API Key<input name="apiKey" type="password" autocomplete="off" placeholder="密钥加密保存在本机" /></label><label>服务支持的接口<select name="protocol"><option value="responses">Responses</option><option value="chat">Chat Completions</option><option value="messages">Messages</option><option value="all">三种接口均支持</option></select></label></div>
+    <details class="network-options"><summary>网络设置（可选）</summary><p class="hint">只影响此连接的登录、模型发现和请求。通常保持默认；需要独立代理时再设置。</p><label>此连接使用<select name="proxy"></select></label><button type="button" class="plain" data-action="add-proxy">添加独立代理</button><p class="hint">授权网页使用系统浏览器的网络。这里不修改系统代理，也不启动额外代理内核。</p></details>
+    <label>模型 ID（可选，每行一个）<textarea name="modelIds" rows="3" placeholder="留空后点击“同步模型”；不支持模型发现的服务可手动填写。"></textarea></label>
+    <p class="hint">添加连接后，模型会汇总到同一个目录。Codex 和其他客户端通过本地网关调用。</p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="connection-dialog">取消</button><button type="submit" class="primary">保存连接</button></div>
+  </form></dialog>
+  <dialog id="proxy-dialog"><form id="proxy-form"><div class="dialog-title"><h2>添加网络代理</h2><button type="button" class="icon-button" data-close="proxy-dialog">×</button></div><label>名称<input name="name" required placeholder="例如：工作代理" /></label><label>代理地址<input name="url" required placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080" /></label><div class="form-grid"><label>用户名（可选）<input name="username" autocomplete="off" /></label><label>密码（可选）<input name="password" type="password" autocomplete="off" /></label></div><p class="hint">指定代理不可用时会明确报错，不会自动改为直连。</p><div class="dialog-actions"><button type="button" class="secondary" data-close="proxy-dialog">取消</button><button class="primary" type="submit">保存代理</button></div></form></dialog>
+  <dialog id="login-dialog"><div class="dialog-title"><div><div class="eyebrow">CHATGPT</div><h2>设备码登录</h2></div><button class="icon-button" data-close="login-dialog">×</button></div><div id="login-content"></div><div class="dialog-actions"><button class="secondary" id="cancel-login">取消登录</button><button class="primary" id="open-login">打开授权页面</button></div></dialog>
+  <dialog id="preview-dialog"><div class="dialog-title"><div><div class="eyebrow">接入本地网关</div><h2>客户端配置预览</h2></div><button class="icon-button" data-close="preview-dialog">×</button></div><p id="preview-path" class="hint"></p><pre id="preview-code"></pre><p class="hint">应用前会备份原文件，并保留其他配置值。应用后请重新启动客户端加载模型目录；TOML 的排版和注释可能重新整理。</p><div class="dialog-actions"><button class="secondary" data-close="preview-dialog">取消</button><button class="primary" id="apply-client">备份并应用配置</button></div></dialog>
+  <dialog id="model-dialog"><form id="model-form">
+    <div class="dialog-title"><h2>模型设置</h2><button type="button" class="icon-button" data-close="model-dialog">×</button></div>
+    <label>显示名称<input name="name" required maxlength="200" /></label>
+    <label>上下文长度<input name="contextWindow" type="number" min="4096" max="10000000" required /></label>
+    <div class="form-grid"><label>启用模型<select name="enabled"><option value="true">启用</option><option value="false">停用</option></select></label><label>工具调用<select name="tools"><option value="true">支持</option><option value="false">不支持</option></select></label></div>
+    <div class="form-grid"><label>图片输入<select name="images"><option value="false">不支持</option><option value="true">支持</option></select></label><label>推理等级（逗号分隔）<input name="reasoning" placeholder="例如：low,medium,high" /></label></div>
+    <div class="form-grid"><label>输入价格（美元 / 百万 Token）<input name="priceInput" type="number" min="0" step="any" placeholder="留空则不估算" /></label><label>输出价格（美元 / 百万 Token）<input name="priceOutput" type="number" min="0" step="any" placeholder="留空则不估算" /></label></div>
+    <label>缓存读取价格（可选）<input name="priceCached" type="number" min="0" step="any" /></label>
+    <p class="hint">请按服务商文档填写能力和价格。订阅账号可留空价格，不会把估算费用当作实际账单。</p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="model-dialog">取消</button><button type="submit" class="primary">保存模型</button></div>
+  </form></dialog>
+  <script src="./app.js"></script>
+</body>
+</html>

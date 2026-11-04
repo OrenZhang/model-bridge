@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "port": 18765,
+  "defaultProxy": { "mode": "system" },
+  "connections": [
+    {
+      "id": "my-provider",
+      "name": "我的服务商",
+      "provider": "custom",
+      "auth": "api-key",
+      "baseUrl": "https://api.example.com/v1",
+      "secretRef": "env:MODEL_API_KEY",
+      "proxy": { "mode": "inherit" },
+      "models": [
+        { "id": "my-model", "name": "我的模型", "upstreamId": "replace-with-real-model-id", "protocols": ["chat"], "contextWindow": 128000, "tools": true, "images": false }
+      ]
+    }
+  ]
+}

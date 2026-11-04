@@ -1,0 +1,63 @@
+{
+  "name": "model-bridge",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "description": "One local model gateway for Codex, Claude Code and other agents.",
+  "type": "module",
+  "main": "dist/desktop/main.js",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc && tsc -p tsconfig.ui.json && node scripts/build-ui.mjs",
+    "start": "node dist/cli.js",
+    "desktop": "npm run build && electron .",
+    "check": "tsc --noEmit && tsc -p tsconfig.ui.json",
+    "test": "vitest run",
+    "package": "npm run build && electron-builder --publish never"
+  },
+  "dependencies": {
+    "@openai/codex": "0.144.1",
+    "smol-toml": "^1.4.2",
+    "undici": "8.12.3",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "electron": "45.2.2",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "build": {
+    "asarUnpack": ["node_modules/@openai/**/*"],
+    "appId": "io.github.orenzhang.modelbridge",
+    "productName": "Model Bridge",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
