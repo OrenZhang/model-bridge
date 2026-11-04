@@ -10,6 +10,7 @@ let editingModel: { connectionId: string; modelId: string } | undefined;
 let selectedAddress = '';
 const clientTabs = [{ id: 'codex', name: 'Codex' }, { id: 'claude', name: 'Claude Code' }];
 let clientTab = 'codex'; let clientBusy = false;
+let portableClient = 'codex'; let portableAddress = ''; let portableRevision = 0;
 
 async function call(operation: string, payload?: unknown) { return window.modelBridge.call(operation, payload); }
 function toast(message: string, error = false) { const element = $('#toast'); element.textContent = message.replace(/^Error invoking remote method '[^']+': Error: /, ''); element.classList.toggle('error', error); element.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => element.hidden = true, error ? 9000 : 4500); }
@@ -59,7 +60,28 @@ function clientsPage() {
   const providers = new Set(available.map(({ connection }: any) => connection.id)).size;
   const disabled = clientBusy || !status || status.mode === 'error';
   const tabs = `<div class="client-tabs" role="tablist" aria-label="客户端">${clientTabs.map(item => `<button id="tab-${item.id}" role="tab" aria-selected="${clientTab === item.id}" aria-controls="client-tab-panel" tabindex="${clientTab === item.id ? 0 : -1}" class="${clientTab === item.id ? 'active' : ''}" data-client-tab="${item.id}">${item.name}</button>`).join('')}</div>`;
-  return `${tabs}<section id="client-tab-panel" role="tabpanel" aria-labelledby="tab-${clientTab}"><div class="mode-heading"><p>选择 ${client.name} 的使用模式</p><button class="plain" data-go="connections">管理服务商 →</button></div><div class="panel mode-list"><div class="mode-row ${unified ? 'is-current' : ''}"><div class="mode-symbol">⇄</div><div class="mode-description"><h3>统一模型</h3><p>连接本地网关，使用所有已接入服务商的模型。</p><small>${providers} 个连接 · ${available.length} 个模型 · 客户端无需单独登录服务商</small></div>${unified ? '<span class="using-service">使用中</span>' : `<button class="primary" data-action="use-gateway" ${disabled || !available.length ? 'disabled' : ''}>启用</button>`}</div><div class="mode-row ${original ? 'is-current' : ''}"><div class="mode-symbol native-mode">↶</div><div class="mode-description"><h3>原始认证</h3><p>使用客户端原来的连接和账号认证。</p><small>保留原有登录，可随时切回</small></div>${original ? '<span class="using-service">使用中</span>' : `<button class="secondary" data-action="use-original" ${disabled || !status?.canRestore ? 'disabled' : ''}>切换</button>`}</div></div>${status?.error ? `<p class="hint service-error">${escape(status.error)}</p>` : ''}${!available.length ? '<p class="switch-note">添加服务商后即可启用统一模型，模型会自动汇总。</p>' : '<p class="switch-note">统一模式下直接在客户端选择模型。切换模式后，已打开的客户端可能需要重启。</p>'}${unified && !status.canRestore ? '<p class="hint service-error">未找到可用的原始配置备份，暂时无法切回。</p>' : ''}</section>`;
+  return `${tabs}<section id="client-tab-panel" role="tabpanel" aria-labelledby="tab-${clientTab}"><div class="mode-heading"><p>选择 ${client.name} 的使用模式</p><button class="plain" data-go="connections">管理服务商 →</button></div><div class="panel mode-list"><div class="mode-row ${unified ? 'is-current' : ''}"><div class="mode-symbol">⇄</div><div class="mode-description"><h3>统一模型</h3><p>连接本地网关，使用所有已接入服务商的模型。</p><small>${providers} 个连接 · ${available.length} 个模型 · 客户端无需单独登录服务商</small></div><div class="mode-actions"><button class="secondary" data-action="portable-config" ${!available.length ? 'disabled' : ''}>复制配置</button>${unified ? '<span class="using-service">使用中</span>' : `<button class="primary" data-action="use-gateway" ${disabled || !available.length ? 'disabled' : ''}>启用</button>`}</div></div><div class="mode-row ${original ? 'is-current' : ''}"><div class="mode-symbol native-mode">↶</div><div class="mode-description"><h3>原始认证</h3><p>使用客户端原来的连接和账号认证。</p><small>保留原有登录，可随时切回</small></div>${original ? '<span class="using-service">使用中</span>' : `<button class="secondary" data-action="use-original" ${disabled || !status?.canRestore ? 'disabled' : ''}>切换</button>`}</div></div>${status?.error ? `<p class="hint service-error">${escape(status.error)}</p>` : ''}${!available.length ? '<p class="switch-note">添加服务商后即可启用统一模型，模型会自动汇总。</p>' : '<p class="switch-note">统一模式下直接在客户端选择模型。切换模式后，已打开的客户端可能需要重启。</p>'}${unified && !status.canRestore ? '<p class="hint service-error">未找到可用的原始配置备份，暂时无法切回。</p>' : ''}</section>`;
+}
+async function updatePortableConfig(preferLan = false) {
+  const revision = ++portableRevision;
+  const addresses = [state.address, ...(state.lanAddresses ?? [])];
+  if (preferLan || !addresses.includes(portableAddress)) portableAddress = state.lanAddresses?.[0] ?? state.address;
+  const selector = $<HTMLSelectElement>('#portable-address');
+  selector.innerHTML = addresses.map((address: string) => `<option value="${escape(address)}">${escape(address)} · ${address === state.address ? '本机' : '局域网'}</option>`).join('');
+  selector.value = portableAddress;
+  $<HTMLInputElement>('#portable-lan').checked = state.config.listenHost === '0.0.0.0';
+  $('#portable-description').textContent = portableAddress === state.address ? '当前地址仅本机可用。分享给其他设备前，请开启局域网访问并选择网卡地址。' : '其他设备使用此网卡地址连接；两台电脑需网络互通，并允许此端口通过防火墙。';
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>('#portable-dialog [data-portable]')];
+  buttons.forEach(button => button.disabled = true); $('#portable-preview').textContent = '正在生成…';
+  try {
+    const result = await call('client.portable-preview', { client: portableClient, address: portableAddress });
+    if (revision !== portableRevision) return;
+    $('#portable-preview').textContent = result.preview;
+    $('#portable-instructions').textContent = result.instructions;
+    $<HTMLButtonElement>('#portable-copy-catalog').hidden = !result.requiresCatalog;
+    $('#portable-copy-config').textContent = `复制 ${result.filename}`;
+    buttons.forEach(button => button.disabled = false);
+  } catch (error: any) { if (revision === portableRevision) $('#portable-preview').textContent = error.message; }
 }
 function render() {
   $('#page-title').textContent = titles[page]!;
@@ -165,6 +187,12 @@ document.addEventListener('click', event => {
       if (operation === 'discover') await action('connection.discover', { id }, '模型目录已同步');
       if (operation === 'login') { activeLogin = id; $<HTMLDialogElement>('#login-dialog').showModal(); updateLogin(); await action('device.login', { id }); }
       if (operation === 'delete' && confirm('移除此连接及其模型？已有客户端请求可能受到影响。')) await action('connection.delete', { id }, '连接已移除');
+      if (operation === 'portable-config') { portableClient = clientTab; portableAddress = ''; $<HTMLDialogElement>('#portable-dialog').showModal(); await updatePortableConfig(); }
+      if (target.dataset.portable) {
+        const payload = { client: portableClient, address: portableAddress };
+        if (target.dataset.portable === 'export') { if (await call('client.export-portable', payload)) toast('配置包已导出'); }
+        else { await call('client.copy-portable', { ...payload, part: target.dataset.portable }); toast('已复制，配置包含本网关访问密钥'); }
+      }
       if (operation === 'use-gateway' || operation === 'use-original') {
         if (clientBusy) return;
         const client = clientTab; clientBusy = true; render();
@@ -215,5 +243,10 @@ $<HTMLFormElement>('#model-form').onsubmit = event => {
   void action('connection.save', { connection, autoDiscover: false }, '模型设置已保存').then(() => $<HTMLDialogElement>('#model-dialog').close()).catch(() => {});
 };
 $('#cancel-login').onclick = () => void action('device.cancel', { id: activeLogin }).catch(() => {});
+$<HTMLSelectElement>('#portable-address').onchange = event => { portableAddress = (event.target as HTMLSelectElement).value; void updatePortableConfig(); };
+$<HTMLInputElement>('#portable-lan').onchange = event => {
+  const input = event.target as HTMLInputElement; input.disabled = true;
+  void action('service.lan', { enabled: input.checked }).then(() => updatePortableConfig(true)).catch(() => { input.checked = state.config.listenHost === '0.0.0.0'; }).finally(() => input.disabled = false);
+};
 void refresh(); setInterval(() => { if (!clientBusy && !document.querySelector('select:focus') && !window.getSelection()?.toString()) void refresh(); }, 4000);
 export {};

@@ -2,6 +2,7 @@ node_modules/
 dist/
 release/
 coverage/
+work/
 .DS_Store
 .env
 .env.*

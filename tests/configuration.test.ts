@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { parse, stringify } from 'smol-toml';
-import { ClientConfiguration } from '../src/clients/configure.js';
+import { ClientConfiguration, resolveClientAddress } from '../src/clients/configure.js';
 import { ConfigSchema } from '../src/core/config.js';
 import { unknownTokens, usageTokens, estimatedCost, usageCsv } from '../src/core/usage.js';
 const dirs: string[] = [];
@@ -11,6 +11,37 @@ afterEach(async () => { for (const d of dirs.splice(0)) await rm(d, { recursive:
 const config = () => ConfigSchema.parse({ connections: [{ id: 'kimi', name: 'Kimi', auth: 'api-key', provider: 'kimi', baseUrl: 'https://example.invalid/v1', models: [{ id: 'coding', name: 'Coding', upstreamId: 'coding', protocols: ['responses'] }] }] });
 async function setup() { const dir = await mkdtemp(path.join(os.tmpdir(), 'model-bridge-client-')); dirs.push(dir); return { dir, clients: new ClientConfiguration(dir, path.join(dir, 'data')) }; }
 describe('client configuration', () => {
+  it.each(['codex', 'claude'] as const)('exports portable %s LAN settings without host paths, native secrets or local writes', async client => {
+    const { dir, clients } = await setup(); const file = path.join(dir, client === 'codex' ? '.codex/config.toml' : '.claude/settings.json');
+    await mkdir(path.dirname(file)); const original = 'private native contents that do not need to be parsed during export'; await writeFile(file, original);
+    const settings = config(); settings.connections[0]!.secretRef = 'private-provider-key';
+    settings.connections.push({ ...settings.connections[0]!, id: 'minimax', name: 'MiniMax', provider: 'minimax' });
+    const portable = clients.portable(client, settings, 'http://192.168.31.21:18765', 'exported-gateway-key');
+    const exported: any = client === 'codex' ? parse(portable.configuration) : JSON.parse(portable.configuration);
+    expect(portable.preview).not.toContain('exported-gateway-key'); expect(portable.configuration).toContain('exported-gateway-key');
+    expect(JSON.stringify(portable.files)).not.toContain(dir); expect(JSON.stringify(portable.files)).not.toContain('private-provider-key');
+    expect(JSON.stringify(portable.files)).not.toContain(original); expect(await readFile(file, 'utf8')).toBe(original);
+    await expect(readFile(path.join(dir, 'data/codex-models.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    if (client === 'codex') {
+      expect(exported.model_catalog_json).toBe('codex-models.json');
+      expect(exported.web_search).toBe('disabled');
+      expect(exported.model_providers.model_bridge).toMatchObject({ base_url: 'http://192.168.31.21:18765/v1', requires_openai_auth: false });
+      expect(Object.keys(portable.files)).toEqual(['config.toml', 'codex-models.json', 'README.txt']);
+      expect(JSON.parse(portable.catalog!).models.map((model: any) => model.slug)).toEqual(['kimi/coding', 'minimax/coding']);
+    } else {
+      expect(exported.env).toMatchObject({ ANTHROPIC_BASE_URL: 'http://192.168.31.21:18765', ANTHROPIC_AUTH_TOKEN: 'exported-gateway-key' });
+      expect(portable.catalog).toBeUndefined(); expect(Object.keys(portable.files)).toEqual(['settings.json', 'README.txt']);
+    }
+  });
+  it('rejects wildcard and stale LAN export destinations instead of silently copying loopback', async () => {
+    const { clients } = await setup(); const local = 'http://127.0.0.1:18765'; const lan = 'http://192.168.31.21:18765';
+    expect(resolveClientAddress(local, local, [])).toBe(local);
+    expect(resolveClientAddress(lan, local, [lan])).toBe(lan);
+    expect(() => resolveClientAddress(lan, local, [])).toThrow('局域网地址');
+    expect(() => resolveClientAddress('http://0.0.0.0:18765', local, [])).toThrow();
+    expect(() => clients.portable('codex', config(), 'http://0.0.0.0:18765', 'key')).toThrow('0.0.0.0');
+    expect(() => clients.portable('codex', ConfigSchema.parse({}), local, 'key')).toThrow('至少一个');
+  });
   it('enables the entire Codex model catalog and restores original authentication settings without changing login files', async () => {
     const { dir, clients } = await setup(); const codexDirectory = path.join(dir, '.codex'); await mkdir(codexDirectory);
     const file = path.join(codexDirectory, 'config.toml'); const authFile = path.join(codexDirectory, 'auth.json');
@@ -25,6 +56,7 @@ describe('client configuration', () => {
       expect(await clients.enableGateway('codex', () => settings, address, 'gateway-key')).toMatchObject({ mode: 'bridge', canRestore: true });
       const installed: any = parse(await readFile(file, 'utf8'));
       expect(installed.model_provider).toBe('model_bridge');
+      expect(installed.web_search).toBe('disabled');
       expect(installed.model_providers.model_bridge).toMatchObject({ base_url: address + '/v1', requires_openai_auth: false, experimental_bearer_token: 'gateway-key' });
       expect(installed.mcp_servers.test.command).toBe('original-tool');
       const catalog = JSON.parse(await readFile(installed.model_catalog_json, 'utf8'));
@@ -83,6 +115,31 @@ describe('client configuration', () => {
     const file = path.join(dir, '.codex/config.toml'); const external = (await readFile(file, 'utf8')).replace(address, 'http://127.0.0.1:19999'); await writeFile(file, external);
     await expect(clients.restoreOriginalMode('codex', address)).rejects.toThrow('已切换到其他连接');
     expect(await readFile(file, 'utf8')).toBe(external);
+  });
+  it.each(['live', 'cached', undefined] as const)('restores the original web_search=%s preference after edits and repeated gateway activation', async webSearch => {
+    const { dir, clients } = await setup(); const address = 'http://127.0.0.1:18765'; const settings = config();
+    const file = path.join(dir, '.codex/config.toml'); await mkdir(path.dirname(file));
+    await writeFile(file, stringify({ model_provider: 'openai', model: 'native-model', ...(webSearch ? { web_search: webSearch } : {}), mcp_servers: { local: { command: 'original-tool' } } }));
+    for (const reenable of [false, true]) {
+      await clients.enableGateway('codex', () => settings, address, 'gateway-key');
+      const installed: any = parse(await readFile(file, 'utf8'));
+      expect(installed.web_search).toBe('disabled');
+      installed.mcp_servers.local.command = reenable ? 'second-user-edit' : 'first-user-edit';
+      installed.web_search = 'cached';
+      await writeFile(file, stringify(installed));
+      if (reenable) {
+        await clients.enableGateway('codex', () => settings, address, 'gateway-key');
+        const reapplied: any = parse(await readFile(file, 'utf8'));
+        expect(reapplied.web_search).toBe('disabled');
+        expect(reapplied.mcp_servers.local.command).toBe('second-user-edit');
+      }
+      await clients.restoreOriginalMode('codex', address);
+      const restored: any = parse(await readFile(file, 'utf8'));
+      expect(restored.web_search).toBe(webSearch);
+      expect(Object.hasOwn(restored, 'web_search')).toBe(webSearch !== undefined);
+      expect(restored.model_provider).toBe('openai'); expect(restored.model).toBe('native-model');
+      expect(restored.mcp_servers.local.command).toBe(reenable ? 'second-user-edit' : 'first-user-edit');
+    }
   });
   it.each(['codex', 'claude'] as const)('recognizes %s gateway mode when its default model was removed manually', async client => {
     const { dir, clients } = await setup(); const settings = config(); const address = 'http://127.0.0.1:18765';
@@ -170,6 +227,7 @@ describe('client configuration', () => {
       expect(plan.preview).not.toContain('unrelated-secret');
       const native = clients.export(plan.id, 'native'); const portable = clients.export(plan.id, 'json');
       expect(native).toContain('gateway-key'); expect(native).not.toContain('unrelated-secret'); expect(native).not.toContain('previous-key');
+      if (client === 'codex') expect(parse(native).web_search).toBe('disabled');
       expect(JSON.parse(portable).configuration).toEqual(client === 'codex' ? parse(native) : JSON.parse(native));
       await clients.apply(plan.id, config());
       const installed = await readFile(plan.path, 'utf8'); expect(installed).toContain('unrelated-secret');

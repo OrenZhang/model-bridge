@@ -39,7 +39,9 @@ OpenAI 模型列表不足以驱动 Codex 的模型选择器。生成完整 Codex
 
 请求归一为系统文本、消息、图片、工具定义/调用/结果；返回统一文本、工具参数、用量及完成事件，再编码成客户端协议。保留工具 ID，支持 Codex namespace/custom tools 的基础映射。遇到无法表达的语义明确拒绝。
 
-当前不转换 reasoning/thinking 状态，不允许通过丢弃它们来“假装成功”。这些状态是下一阶段的核心适配任务。原生接口字段由上游决定兼容性。
+归一消息保留有序 reasoning、文本与工具片段。上游原始 thinking/signature、redacted thinking、reasoning_content/details 或 Responses opaque item 以 AES-256-GCM 封装，放入客户端协议可回传的推理条目。绑定客户端、连接、上游地址、模型及协议；收到历史时验证后还原原始记录，不制造其他模型的签名。无效或跨路由状态在调用上游前拒绝。Responses 拆开的推理和工具条目重组为同一 assistant 轮次，Messages 的并行工具结果合并为同一 user 轮次。
+
+封装密钥在桌面加密凭据库持久化；无界面模式使用权限为 0600 的独立密钥文件。SSE 保留分段签名及块结束顺序，JSON 上游响应也通过同一解码与编码路径返回客户端。常规用量日志不保存推理正文。
 
 ### 认证边界
 
@@ -47,7 +49,9 @@ OpenAI 模型列表不足以驱动 Codex 的模型选择器。生成完整 Codex
 
 ### 可恢复配置
 
-配置预览时计算旧文件散列，应用时再次核对；恢复时只覆盖与当时写入结果相同的文件，否则保留用户后续修改并要求手工合并。原值被保留，TOML 注释和排版不保证保留。
+配置预览时计算旧文件散列，应用时再次核对；原始模式恢复在文件未变化时还原完整备份，在配置仍指向本网关时只恢复受管字段，保留用户后续无关修改。外部连接已变更时不覆盖。原值被保留，TOML 注释和排版不保证保留。
+
+便携配置独立生成，不读取或导出原客户端文件。Codex 配置使用相对模型目录路径，连同模型目录和说明导出 ZIP；Claude Code 导出原生 JSON。界面预览隐藏访问密钥，复制与导出使用真实网关密钥。仅接受当前本机或当前已启用的局域网网卡地址，不允许将 0.0.0.0 当作客户端地址。
 
 ### 账号复用、模型发现与局域网
 
@@ -67,6 +71,9 @@ OpenAI 模型列表不足以驱动 Codex 的模型选择器。生成完整 Codex
 - [Codex 登录](https://learn.chatgpt.com/docs/auth)
 - [官方 Codex 源码](https://github.com/openai/codex)
 - [MiniMax Anthropic 接口与 thinking 历史要求](https://platform.minimax.io/docs/api-reference/text-anthropic-api)
+- [Kimi Code 模型与思考等级](https://www.kimi.com/code/docs/en/kimi-code/models)
+- [Responses reasoning 历史](https://developers.openai.com/api/docs/guides/reasoning)
+- [Messages thinking 流式签名](https://platform.claude.com/docs/en/build-with-claude/streaming)
 - [Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)
 - [Mihomo 官方版本与校验值](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.32)
 - [Mihomo 网络配置](https://wiki.metacubex.one/en/config/general/)

@@ -9,6 +9,22 @@ import { codexCatalog, models } from '../core/catalog.js';
 const digest = (text: string | null) => createHash('sha256').update(text === null ? '\0missing' : text).digest('hex');
 async function read(file: string) { try { return await readFile(file, 'utf8'); } catch (error: any) { if (error.code === 'ENOENT') return null; throw error; } }
 export type ClientName = 'codex' | 'claude';
+export function resolveClientAddress(address: string, localAddress: string, lanAddresses: string[]) {
+  if (![localAddress, ...lanAddresses].includes(address)) throw new Error('请选择当前网关的本机地址或已启用的局域网地址。');
+  const url = new URL(address);
+  if (url.hostname === '0.0.0.0' || url.hostname === '[::]') throw new Error('监听地址不能用于客户端连接，请选择实际网卡 IP。');
+  return address;
+}
+export interface PortableClientConfiguration {
+  client: ClientName;
+  address: string;
+  filename: string;
+  configuration: string;
+  preview: string;
+  catalog?: string;
+  instructions: string;
+  files: Record<string, string>;
+}
 const claudeManagedKeys = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL', 'ANTHROPIC_API_KEY'];
 function settingsObject(client: ClientName, text: string | null): any {
   const value = text === null ? {} : client === 'codex' ? parse(text) : JSON.parse(text);
@@ -27,7 +43,7 @@ function restoreFields(current: any, original: any, keys: string[]) {
 }
 function restoreManagedSettings(client: ClientName, current: any, original: any) {
   if (client === 'codex') {
-    restoreFields(current, original, ['model_provider', 'model', 'model_catalog_json']);
+    restoreFields(current, original, ['model_provider', 'model', 'model_catalog_json', 'web_search']);
     restoreFields(current.model_providers, original.model_providers ?? {}, ['model_bridge']);
     if (!Object.keys(current.model_providers).length && !Object.hasOwn(original, 'model_providers')) delete current.model_providers;
   } else {
@@ -52,6 +68,25 @@ export class ClientConfiguration {
   private catalogWrites: Promise<void> = Promise.resolve();
   private changes = new Map<ClientName, Promise<unknown>>();
   constructor(private home: string, private dataDirectory: string, private codexHome = path.join(home, '.codex')) {}
+  portable(client: ClientName, config: Config, address: string, token: string): PortableClientConfiguration {
+    const target = models(config).find(entry => entry.model.tools);
+    if (!target) throw new Error('请先添加至少一个已启用且支持工具调用的模型，再复制客户端配置。');
+    const url = new URL(address);
+    if (!['http:', 'https:'].includes(url.protocol) || url.hostname === '0.0.0.0' || url.hostname === '[::]' || url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)) throw new Error('客户端需要可访问的网关基础地址，不能使用 0.0.0.0。');
+    const base = address.replace(/\/+$/, '');
+    const generated = client === 'codex'
+      ? { model_provider: 'model_bridge', model: target.id, model_catalog_json: 'codex-models.json', web_search: 'disabled', model_providers: { model_bridge: { name: 'Model Bridge', base_url: base + '/v1', wire_api: 'responses', requires_openai_auth: false, supports_websockets: false, experimental_bearer_token: token } } }
+      : { env: { ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: token, ANTHROPIC_MODEL: target.id, ANTHROPIC_DEFAULT_OPUS_MODEL: target.id, ANTHROPIC_DEFAULT_SONNET_MODEL: target.id, ANTHROPIC_DEFAULT_HAIKU_MODEL: target.id, CLAUDE_CODE_SUBAGENT_MODEL: target.id } };
+    const configuration = client === 'codex' ? stringify(generated) : JSON.stringify(generated, null, 2) + '\n';
+    const filename = client === 'codex' ? 'config.toml' : 'settings.json';
+    const catalog = client === 'codex' ? JSON.stringify(codexCatalog(config), null, 2) + '\n' : undefined;
+    const instructions = client === 'codex'
+      ? 'Codex 需要 config.toml 和 codex-models.json，建议直接导出配置包。\n将两个文件放到接收端 ~/.codex（Windows：%USERPROFILE%\\.codex，或自定义 CODEX_HOME）。已有配置请合并同名字段并保留其他设置，重启 Codex 后即可选择模型。'
+      : '将 settings.json 的 env 字段合并到接收端 Claude Code 用户设置（默认 ~/.claude/settings.json 或 Windows %USERPROFILE%\\.claude\\settings.json）。保留其他设置，移除冲突的 env.ANTHROPIC_API_KEY。重新启动 Claude Code 后使用该网关。';
+    const readme = `Model Bridge 客户端接入\n\n网关地址：${base}\n\n${instructions}\n\n配置包含本网关访问密钥，只交给获准访问网关的人，不包含服务商 API Key 或原始登录凭据。网关电脑必须保持运行；局域网连接需要开启局域网监听并允许端口通过防火墙。0.0.0.0 是监听地址，客户端使用这里已填写的实际 IP。\n\n模型目录为导出时快照，服务商或模型发生变化后请重新导出。已有客户端文件请先备份；该文件包不会自动覆盖本机配置。\n`;
+    return { client, address: base, filename, configuration, preview: configuration.split(token).join('<local gateway key>'), ...(catalog ? { catalog } : {}), instructions,
+      files: { [filename]: configuration, ...(catalog ? { 'codex-models.json': catalog } : {}), 'README.txt': readme } };
+  }
   private file(client: ClientName) { return client === 'codex' ? path.join(this.codexHome, 'config.toml') : path.join(this.home, '.claude', 'settings.json'); }
   private serialize<T>(client: ClientName, change: () => Promise<T>): Promise<T> {
     const next = (this.changes.get(client) ?? Promise.resolve()).then(change);
@@ -122,8 +157,10 @@ export class ClientConfiguration {
       const existing: any = before ? parse(before) : {};
       existing.model_provider = 'model_bridge'; existing.model = target.id;
       existing.model_catalog_json = path.join(this.dataDirectory, 'codex-models.json');
+      // Codex can send its hosted web_search tool even when the catalog disables search support.
+      existing.web_search = 'disabled';
       existing.model_providers = { ...existing.model_providers, model_bridge: { name: 'Model Bridge', base_url: address + '/v1', wire_api: 'responses', requires_openai_auth: false, supports_websockets: false, experimental_bearer_token: token } };
-      generated = { model_provider: existing.model_provider, model: existing.model, model_catalog_json: existing.model_catalog_json, model_providers: { model_bridge: existing.model_providers.model_bridge } };
+      generated = { model_provider: existing.model_provider, model: existing.model, model_catalog_json: existing.model_catalog_json, web_search: existing.web_search, model_providers: { model_bridge: existing.model_providers.model_bridge } };
       content = stringify(existing);
     } else {
       const existing = before ? JSON.parse(before) : {};

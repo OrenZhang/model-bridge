@@ -1,0 +1,66 @@
+{
+  "createdAt": "2026-11-04T11:24:17.417Z",
+  "mockUpstream": false,
+  "codexVersion": "0.144.1",
+  "results": [
+    {
+      "provider": "kimi",
+      "model": "kimi-validation/kimi-for-coding",
+      "upstreamHost": "api.kimi.com",
+      "upstreamModel": "kimi-for-coding",
+      "upstreamProtocol": "chat",
+      "downstreamProtocol": "responses",
+      "validationKind": "real-codex-live-gateway",
+      "gatewayHost": "127.0.0.1",
+      "status": "passed",
+      "turns": 3,
+      "toolCalls": 3,
+      "requests": 5,
+      "encryptedReasoningReceived": 5,
+      "encryptedReasoningReplayed": 10,
+      "toolResultsReplayed": 8,
+      "tokenUsage": {
+        "input": 27443,
+        "output": 522,
+        "reasoning": 210
+      },
+      "httpStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ]
+    },
+    {
+      "provider": "minimax",
+      "model": "minimax-validation/MiniMax-M2.7",
+      "upstreamHost": "api.minimaxi.com",
+      "upstreamModel": "MiniMax-M2.7",
+      "upstreamProtocol": "messages",
+      "downstreamProtocol": "responses",
+      "validationKind": "real-codex-live-gateway",
+      "gatewayHost": "127.0.0.1",
+      "status": "passed",
+      "turns": 3,
+      "toolCalls": 3,
+      "requests": 5,
+      "encryptedReasoningReceived": 1,
+      "encryptedReasoningReplayed": 3,
+      "toolResultsReplayed": 8,
+      "tokenUsage": {
+        "input": 29826,
+        "output": 217,
+        "reasoning": null
+      },
+      "httpStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "tokenUsageNote": "Thinking tokens are included in output; upstream does not report a separate reasoning count."
+    }
+  ]
+}

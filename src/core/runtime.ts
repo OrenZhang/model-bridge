@@ -9,6 +9,7 @@ import { DeviceLogin } from '../auth/device-login.js';
 import { ClientConfiguration } from '../clients/configure.js';
 import { LocalCodexAccounts } from '../auth/local-codex.js';
 import { ManagedNetworks } from '../network/managed.js';
+import { loadReasoningVault } from './reasoning-key.js';
 
 export async function createRuntime(directory: string, secrets: SecretStore, home: string, systemProxy?: SystemProxyResolver, codexExecutable?: string) {
   const store = await new ConfigStore(directory).load();
@@ -36,7 +37,8 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     return logins.get(connection.id)!.login;
   }
   let usageWriteFailed = false;
-  const gatewayOptions = { config: () => store.get(), secrets, network, usage, chatgptCredentials: (c: Connection) => login(c).credentials(), onUsageError: () => { usageWriteFailed = true; } };
+  const reasoningVault = await loadReasoningVault(directory, secrets);
+  const gatewayOptions = { config: () => store.get(), secrets, network, usage, reasoningVault, chatgptCredentials: (c: Connection) => login(c).credentials(), onUsageError: () => { usageWriteFailed = true; } };
   let gateway = await startGateway(gatewayOptions);
   managed = new ManagedNetworks(directory, store, secrets, network, () => gateway.activeRequests() === 0 && discoveryTasks.size === 0 && ![...logins.values()].some(value => ['starting', 'waiting'].includes(value.login.state.phase)));
   async function ensureClient(id: 'codex' | 'claude' | 'generic') {

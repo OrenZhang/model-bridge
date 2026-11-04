@@ -49,6 +49,15 @@
     <div id="network-core-status"></div><div id="network-profiles"></div>
     <form id="network-form"><h3>添加订阅或本地配置</h3><label>名称<input name="name" required maxlength="100" placeholder="例如：我的订阅" /></label><label>来源<select name="source"><option value="subscription">Clash / Mihomo 订阅地址</option><option value="config">本地 YAML 配置</option></select></label><label id="subscription-field">HTTPS 订阅地址<input name="url" type="password" autocomplete="off" placeholder="订阅地址加密保存在本机" /></label><div id="network-config-fields" hidden><button type="button" class="secondary" data-action="read-network-config">选择配置文件</button><label>配置内容<textarea name="config" rows="5" placeholder="proxies: ..."></textarea></label></div><p class="hint">支持包含节点的 Clash / Mihomo YAML。仅导入节点，订阅中的系统路由、TUN、DNS 和监听设置不会应用。</p><div class="dialog-actions"><button class="primary" type="submit">保存并读取节点</button></div></form>
   </dialog>
+  <dialog id="portable-dialog" class="portable-dialog">
+    <div class="dialog-title"><h2>复制接入配置</h2><button class="icon-button" data-close="portable-dialog">×</button></div>
+    <div class="portable-network"><label class="toggle"><input id="portable-lan" type="checkbox" />局域网访问</label><select id="portable-address" aria-label="配置中的服务地址"></select></div>
+    <p id="portable-description" class="hint"></p>
+    <p id="portable-instructions" class="portable-instructions"></p>
+    <details class="portable-code"><summary>查看配置（密钥已隐藏）</summary><pre id="portable-preview"></pre></details>
+    <p class="hint">复制或导出的配置包含本网关访问密钥，请仅分享给需要使用的成员。</p>
+    <div class="dialog-actions"><button class="secondary" data-portable="export">导出配置包</button><button id="portable-copy-catalog" class="secondary" data-portable="catalog">复制模型目录</button><button id="portable-copy-config" class="primary" data-portable="config">复制配置</button></div>
+  </dialog>
   <script src="./app.js"></script>
 </body>
 </html>

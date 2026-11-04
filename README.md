@@ -2,7 +2,7 @@
 
 一个在本机运行、可选向局域网提供服务的模型入口，把 ChatGPT、Kimi、MiniMax 和兼容服务接入 Codex、Claude Code 与其他 Agent。
 
-**当前版本：`0.1.0-alpha.1`，开发预览。** 已有可运行桌面界面和网关；真实订阅账号的完整联调与 Windows 实机验收尚未完成。兼容范围见下表，不能将接口存在等同于所有模型功能均可用。
+**当前版本：`0.1.0-alpha.1`，开发预览。** 真实 Codex 已通过 Kimi Coding、MiniMax M2.7 的多轮与工具调用验证；ChatGPT 账号完整联调与 Windows 实机验收尚未完成。兼容范围见下表。
 
 ## 使用方式
 
@@ -21,6 +21,8 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 
 服务商添加、账号登录和网络设置集中在“账号与连接”，模型集中在“模型目录”。启用统一模型会自动汇总全部模型目录，无需再选定某个服务商。首次默认模型从可用模型中选取，之后在客户端选择模型；已打开的客户端可能需要重启。其他 Agent 使用总览中的统一接口地址和访问密钥接入。
 
+**启用**会备份并写入本机客户端配置。旁边的**复制配置**可选择本机或局域网地址，复制原生配置或导出 ZIP；导出不会改写本机客户端。Codex 使用 `config.toml` 与 `codex-models.json` 两个文件，Claude Code 使用 `settings.json`。
+
 所有连接始终经过同一网关。模型 ID 为 `连接ID/模型ID`，同名模型、多账号不会互相覆盖。请求明确指定模型，未知模型返回错误；切换不会把正在进行的请求转到另一个账号。
 
 网络设置位于每个连接的可选区域。可导入自己的 Clash / Mihomo YAML 订阅或本地配置，选择节点后由官方 mihomo 内核按需运行；只处理绑定此订阅的模型连接，不设置系统代理、TUN 或系统 DNS。也保留默认网络、直连和手动 HTTP / HTTPS / SOCKS5 代理。
@@ -31,8 +33,9 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 | --- | --- |
 | Windows / macOS 桌面界面 | Electron 实现，macOS 已启动检查；跨平台 CI 验证编译和测试，Windows 实机交互待验收 |
 | ChatGPT 设备码登录 | 已接入随应用分发的官方 Codex helper、独立账号目录、取消与刷新；真实账号登录及推理待验证 |
-| Kimi / MiniMax / Anthropic / 自定义服务 | API Key 与手工模型配置；模型发现取决于服务商是否提供列表接口 |
-| Responses / Messages / Chat Completions | 同协议透传，跨协议文本和 JSON 工具调用转换；流式与非流式调用、取消、错误处理 |
+| Kimi / MiniMax / Anthropic / 自定义服务 | API Key 与模型发现/手工配置；Kimi Coding Chat、MiniMax M2.7 Messages 已通过真实 Codex 跨协议多轮与工具调用 |
+| Responses / Messages / Chat Completions | 同协议透传，跨协议文本、JSON 工具调用和 thinking 历史转换；流式与 JSON 回退、取消、错误处理 |
+| 跨协议 thinking | 保留 Chat reasoning、Messages thinking/signature/redacted thinking、Responses 加密推理项；同一客户端与模型路由可在工具调用后完整回传 |
 | Codex 模型目录 | 生成专用目录文件和配置；已用真实 Codex `0.144.1` 的 `model/list` 验证多个服务商同时可见 |
 | 已有 Codex 账号 | 检测默认目录及 `CODEX_HOME`，识别文件和直接系统 keyring 登录；复用时保存独立副本，账号凭据不返回界面 |
 | Claude Code 模式 | 统一模型 / 原始认证切换、备份与恢复；默认模型可在 Claude Code 使用完整网关模型 ID 切换，未验证其所有版本的模型选择器行为 |
@@ -44,8 +47,9 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 
 ### 当前兼容限制
 
-- **跨协议的 thinking / reasoning 状态、加密推理项暂不支持**，会明确报错。MiniMax 等需要完整思考历史的模型，目前应使用原生 Messages 客户端；不能宣称它们已能在 Codex 中完成多轮工具任务。后续优先补齐这一项。
+- thinking 历史使用网关加密封装，绑定客户端与上游模型路由。客户端需要保留并回传这些条目；不能把原模型的签名或加密状态迁移给另一个服务商。切换模型或账号后请新建对话。真实服务及模拟上游的独立结果见 [验证说明](docs/validation.md)。
 - 跨协议暂不支持 `previous_response_id`、托管会话、结构化输出、音视频、服务端工具、强制指定工具等高级能力。图片只支持已声明的常见图片块。原生协议优先保留服务商字段，但仍受服务商兼容范围限制。
+- 统一模式生成的 Codex 配置关闭内置服务端 Web Search，避免客户端默认发送上游无法处理的工具；普通本地工具调用不受影响，切回原始模式恢复原设置。
 - ChatGPT 设备授权使用 Codex 的登录能力与账号凭据，**不等于 OpenAI Platform API Key**。当前 ChatGPT 请求通道属于需单独验证的适配器，不能承诺所有订阅、组织策略或未来版本均兼容。
 - Kimi / MiniMax 暂不提供各自的订阅 OAuth 登录。套餐剩余额度/官方账单未接入，本地统计只覆盖经过本网关的请求。
 - 未返回的用量记为未知，不从文本猜测 Token 数；费用为配置价格下的估算，不是订阅账单。线上协议必填用量字段可能使用零占位，本机统计保留未知状态。
@@ -130,10 +134,15 @@ npm run dev
 
 总览分别提供基础地址、完整地址和访问密钥的复制入口。允许局域网访问后，其他设备用本机实际网卡 IP 替换 `127.0.0.1`；`0.0.0.0` 是监听地址，不是客户端目标地址。同网段设备还需要系统防火墙允许端口。此模式为 HTTP，请只用于可信局域网。
 
+也可在“客户端模式 → 统一模型 → 复制配置”中直接开启局域网访问并选中网卡地址，配置会自动使用该地址。Codex 配置包中的两个文件放在接收方同一个 Codex 配置目录（默认 `~/.codex`；Windows 为 `%USERPROFILE%\.codex`，或自定义 `CODEX_HOME`）。`model_catalog_json` 使用相对路径，不携带发送方电脑路径。模型目录是导出时的快照；新增模型后需重新复制目录。Claude Code 的 `settings.json` 放在接收方 `~/.claude` 或 `%USERPROFILE%\.claude`，已有文件请合并相关字段。
+
+配置包含本网关访问密钥，不包含服务商密钥、原始客户端配置或登录文件。接收方无需额外登录 OpenAI；网关所在电脑需要保持应用运行。
+
 ## 数据存储
 
 - `config.json`：服务地址、模型能力、代理引用、客户端密钥散列。
 - `credentials.enc`：桌面凭据，使用 Electron safeStorage 加密。
+- `reasoning.key`：仅无界面模式使用的私有推理封装密钥；桌面模式将此密钥保存在 `credentials.enc`。密钥持久化后，重启网关仍可继续已有对话。
 - `accounts/<id>/codex/`：独立 Codex 登录目录。**官方 helper 的 `auth.json` 当前使用私有文件权限存储，尚未纳入桌面加密凭据库**；请勿分享该目录。
 - `usage/*.jsonl`：UTC 按天记录的调用元数据，不记录提示词或回复正文。界面最多查询 90 天，文件不会自动清理。
 - `backups/`：客户端配置备份。备份可能含原有客户端的凭据，不应上传到 GitHub。

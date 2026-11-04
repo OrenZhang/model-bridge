@@ -6,6 +6,9 @@ import { writeFile, readFile, stat } from 'node:fs/promises';
 import { createRuntime, type Runtime } from '../core/runtime.js';
 import { DesktopVault } from './vault.js';
 import { usageCsv, usageView } from '../core/usage.js';
+import { resolveClientAddress } from '../clients/configure.js';
+import { atomicWrite } from '../core/store.js';
+import { strToU8, zipSync } from 'fflate';
 import { z } from 'zod';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -98,6 +101,23 @@ else {
             const { client, model } = z.object({ client: z.enum(['codex', 'claude']), model: z.string().min(1) }).parse(payload);
             const result = await active.clients.switchService(client, () => active.store.get(), active.gateway.address, await active.ensureClient(client), model);
             await active.localAccounts.scan(); return result;
+          }
+          case 'client.portable-preview':
+          case 'client.copy-portable':
+          case 'client.export-portable': {
+            const client = z.enum(['codex', 'claude']).parse(payload.client);
+            const address = resolveClientAddress(z.string().parse(payload.address), active.gateway.address, active.gateway.lanAddresses());
+            const bundle = active.clients.portable(client, active.store.get(), address, await active.ensureClient(client));
+            if (operation === 'client.portable-preview') return { client, address: bundle.address, filename: bundle.filename, preview: bundle.preview, requiresCatalog: !!bundle.catalog, filenames: Object.keys(bundle.files), instructions: bundle.instructions };
+            if (operation === 'client.copy-portable') {
+              const part = z.enum(['config', 'catalog']).parse(payload.part);
+              if (part === 'catalog' && !bundle.catalog) throw new Error('此客户端不需要单独的模型目录。');
+              const { clipboard } = await import('electron'); clipboard.writeText(part === 'catalog' ? bundle.catalog! : bundle.configuration); return true;
+            }
+            const result = await dialog.showSaveDialog(window!, { defaultPath: `${client}-model-bridge.zip`, filters: [{ name: '客户端配置与模型目录', extensions: ['zip'] }] });
+            if (result.canceled || !result.filePath) return false;
+            const archive = zipSync(Object.fromEntries(Object.entries(bundle.files).map(([name, contents]) => [name, strToU8(contents)])));
+            await atomicWrite(result.filePath, archive); return true;
           }
           case 'client.copy-config': {
             const { clipboard } = await import('electron'); clipboard.writeText(active.clients.export(z.string().parse(payload.id), z.enum(['native', 'json']).parse(payload.format))); return true;

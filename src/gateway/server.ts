@@ -9,6 +9,7 @@ import type { SecretStore } from '../core/store.js';
 import { UsageStore, unknownTokens, usageTokens, estimatedCost, type Tokens } from '../core/usage.js';
 import { decodeRequest, encodeRequest, UpstreamDecoder, DownstreamEncoder } from './codec.js';
 import { SSEDecoder, sse } from './sse.js';
+import { ReasoningVault, hasGatewayReasoning } from './reasoning.js';
 
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const paths: Record<Protocol, string> = { responses: '/responses', messages: '/messages', chat: '/chat/completions' };
@@ -35,9 +36,11 @@ export interface GatewayOptions {
   config: () => Config; secrets: SecretStore; network: Network; usage: UsageStore;
   chatgptCredentials?: (connection: Connection) => Promise<{ token: string; accountId: string }>;
   onUsageError?: () => void;
+  reasoningVault?: ReasoningVault;
 }
 export async function startGateway(options: GatewayOptions) {
   const inflight = new Set<AbortController>();
+  const reasoningVault = options.reasoningVault ?? new ReasoningVault();
   let address = '';
   const server = createServer((req, res) => { void handle(req, res); });
   server.requestTimeout = 30000; server.headersTimeout = 15000;
@@ -72,10 +75,11 @@ export async function startGateway(options: GatewayOptions) {
       const { connection, model } = route;
       if (input.tools?.length && !model.tools) throw new BridgeError(400, 'tools_unsupported', 'This model does not support tool calls.');
       const upstream = model.protocols.includes(protocol) ? protocol : model.protocols[0]!;
-      const translated = upstream !== protocol;
-      const canonical = translated ? decodeRequest(protocol, input) : undefined;
+      const translated = upstream !== protocol || hasGatewayReasoning(input);
+      const reasoning = reasoningVault.context(JSON.stringify([clientId, connection.id, connection.baseUrl, model.upstreamId]), upstream, connection.provider, model.upstreamId);
+      const canonical = translated ? decodeRequest(protocol, input, reasoning) : undefined;
       if (canonical && !model.images && canonical.messages.some(m => m.content.some(p => p.type === 'image'))) throw new BridgeError(400, 'images_unsupported', 'This model does not accept images.');
-      let payload: any = canonical ? encodeRequest(upstream, canonical, model.upstreamId) : { ...input, model: model.upstreamId };
+      let payload: any = canonical ? encodeRequest(upstream, canonical, model.upstreamId, reasoning) : { ...input, model: model.upstreamId };
       const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
       if (upstream === 'messages') {
         headers['anthropic-version'] = !translated && typeof req.headers['anthropic-version'] === 'string' ? req.headers['anthropic-version'] : '2023-06-01';
@@ -106,17 +110,26 @@ export async function startGateway(options: GatewayOptions) {
       res.setHeader('x-model-bridge-request-id', requestId);
       if (!upstreamResponse.body) throw new BridgeError(502, 'empty_upstream_response', 'The upstream returned an empty response.');
       const streaming = upstreamResponse.headers.get('content-type')?.includes('text/event-stream');
+      const encoder = canonical ? new DownstreamEncoder(protocol, selected, canonical.tools, reasoning) : undefined;
+      const decoder = translated ? new UpstreamDecoder(upstream) : undefined;
       if (!streaming) {
-        if (translated || input.stream) { await upstreamResponse.body.cancel(); throw new BridgeError(502, 'upstream_stream_required', 'The selected route requires a streaming upstream response.'); }
+        if (!translated && input.stream) { await upstreamResponse.body.cancel(); throw new BridgeError(502, 'upstream_stream_required', 'The selected route requires a streaming upstream response.'); }
         const chunks: Uint8Array[] = []; let size = 0;
         for await (const chunk of upstreamResponse.body) { size += chunk.byteLength; if (size > 16 * 1024 * 1024) throw new BridgeError(502, 'upstream_response_too_large', 'Upstream response exceeds the size limit.'); chunks.push(chunk); }
         const bytes = Buffer.concat(chunks).toString('utf8');
         let result: any; try { result = JSON.parse(bytes); } catch { throw new BridgeError(502, 'invalid_upstream_json', 'The upstream returned invalid JSON.'); }
         if (result.error || result.type === 'error' || result.status === 'failed') throw new BridgeError(502, 'upstream_error', 'The upstream returned an error response.');
+        if (encoder && decoder) {
+          const chunks = decoder.decodeJSON(result).map(delta => encoder.accept(delta)); tokens = decoder.tokens;
+          if (input.stream) {
+            res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+            for (const chunk of chunks) if (chunk) await write(res, chunk);
+            await write(res, encoder.finish()); res.end();
+          } else json(res, 200, encoder.result());
+          status = 'success'; return;
+        }
         tokens = usageTokens(upstream, result.usage); json(res, 200, result); status = 'success'; return;
       }
-      const encoder = canonical ? new DownstreamEncoder(protocol, selected, canonical.tools) : undefined;
-      const decoder = translated ? new UpstreamDecoder(upstream) : undefined;
       let nativeComplete = false; let nativeResult: any; let output: string[] = [];
       const observer = new SSEDecoder(event => {
         if (decoder && encoder) { for (const delta of decoder.decode(event.data)) output.push(encoder.accept(delta)); tokens = decoder.tokens; return; }

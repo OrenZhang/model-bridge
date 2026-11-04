@@ -14,13 +14,15 @@
 - [x] 保存连接/完成登录后自动发现模型并更新目录。
 - [x] 三种协议的 Base URL 与完整地址复制，局域网监听选项与鉴权。
 - [x] Mihomo 订阅配置、节点选择、官方内核校验与按需启动；真实内核模拟节点链路验收。
+- [x] 客户端原生配置复制、可携带的 Codex 模型目录、局域网地址选择与配置包导出。
+- [x] 六个方向的 thinking 历史适配、签名和加密项封装、流式与 JSON 回退集成验证。
+- [x] 真实 Codex 0.144.1 对模拟 Kimi / MiniMax 上游执行三轮对话、工具写入与并行读取。
 
 ## 下一阶段：真实 Agent 闭环
 
 - [ ] ChatGPT 设备码登录 → 重启后刷新 → 真实 Responses 推理；验证请求通道、账号权限、过期/取消行为。
 - [ ] Kimi API Key 与三种原生协议实测；确认套餐入口、模型发现与工具限制。
-- [ ] MiniMax thinking/signature 的跨协议保留和多轮工具结果回传；优先保证 Codex 使用闭环。
-- [ ] Chat Completions 的 provider reasoning、Responses 加密 reasoning 与 Messages thinking 的能力矩阵和回归样例。
+- [x] 真实 Kimi Coding / MiniMax M2.7 的 Codex 多轮 thinking 与工具调用验收；各三轮、三次工具、五次成功请求。
 - [ ] Claude Code 真实任务验证，含 token counting、压缩与版本兼容。
 - [ ] 连接诊断：分别显示网络可达、鉴权、模型权限、协议可用。
 - [ ] API Key 之外的 Kimi / MiniMax 官方授权方案评估。
@@ -42,4 +44,4 @@
 - [ ] 远程模型目录的客户端版本协商。
 - [ ] 更多订阅格式、内置节点连通性/延迟诊断、运行中切换的请求隔离策略。
 
-自动化测试不使用真实账号、不发送付费模型请求。通过测试表示对应模拟契约与本地集成成立，不表示以上全部验收已通过。
+常规测试和 `validate-codex-providers.mjs --mock` 不使用真实账号、不发送付费模型请求；显式配置凭据后运行的 live 验证会调用真实服务。通过模拟测试表示对应契约与本地集成成立，不表示以上全部验收已通过。参见 [验证说明](validation.md)。
