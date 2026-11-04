@@ -164,6 +164,9 @@ async function validateProvider(gateway, provider, route, catalog) {
   for (const key of ['OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'OPENAI_BASE_URL', 'OPENAI_IDENTITY_TOKEN_FILE', 'MODEL_BRIDGE_TEST_GATEWAY_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[key];
   env.NO_PROXY = 'localhost,127.0.0.1,::1'; env.no_proxy = env.NO_PROXY;
   const child = spawn(codexBinary(), ['app-server', '--listen', 'stdio://'], { env, cwd: workspace, stdio: 'pipe', windowsHide: true });
+  // Register immediately: exit can precede stdio closure, and close may occur
+  // before validation reaches finally (including when spawning fails).
+  const childClosed = new Promise(resolve => child.once('close', resolve));
   child.stderr.resume(); const pending = new Map(); let requestId = 0; let currentTurn;
   const marker = `marker-${nonce()}`; const receipt = `receipt-${nonce()}`; const probeFile = path.join(workspace, 'probe.json');
   const lines = createInterface({ input: child.stdout });
@@ -219,8 +222,8 @@ async function validateProvider(gateway, provider, route, catalog) {
     // Gateway and Codex errors contain only synthetic prompts, but cap the report.
     metrics.error = String(error.message).replaceAll(gateway.key, '[redacted]').slice(0, 500);
   } finally {
-    const exited = child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise(resolve => child.once('exit', resolve));
-    child.kill(); await exited; lines.close(); for (const request of pending.values()) request.reject(new Error('Validation completed.')); pending.clear();
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await childClosed; lines.close(); for (const request of pending.values()) request.reject(new Error('Validation completed.')); pending.clear();
   }
   // Anthropic-compatible usage does not separately report thinking tokens.
   // Responses compatibility currently emits zero for that absent field.
@@ -246,7 +249,16 @@ finally {
   for (const result of results.filter(result => result.status === 'blocked')) process.stdout.write(JSON.stringify(result) + '\n');
   const report = { createdAt: new Date().toISOString(), mockUpstream: mock, codexVersion: '0.144.1', results };
   if (reportFile) { await mkdir(path.dirname(reportFile), { recursive: true, mode: 0o700 }); await writeFile(reportFile, JSON.stringify(report, null, 2) + '\n', { mode: 0o600 }); }
-  for (const close of cleanup.reverse()) await close().catch(() => {});
-  await rm(root, { recursive: true, force: true });
+  const cleanupErrors = [];
+  for (const close of cleanup.reverse()) {
+    try { await close(); } catch (error) { cleanupErrors.push(error); }
+  }
+  try {
+    // Windows can briefly retain directory handles after process/stdio closure.
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (error) {
+    cleanupErrors.push(new Error(`Could not remove validation directory ${root} after bounded retries.`, { cause: error }));
+  }
+  if (cleanupErrors.length) throw new AggregateError(cleanupErrors, 'Validation cleanup failed.');
   if (results.some(result => result.status !== 'passed') || results.length !== 2) { process.stderr.write('Validation incomplete; inspect the metadata report. Simulated upstreams are never reported as live-provider verification.\n'); process.exitCode = 1; }
 }
