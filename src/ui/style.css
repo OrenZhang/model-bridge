@@ -49,7 +49,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:20px;ma
 .connection-description{flex:1;min-width:0}
 .connection-description h3{font-size:13px;font-weight:500;overflow-wrap:anywhere}
 .connection-description small{display:block;color:var(--muted);margin-top:4px}
-.connection-status{font-size:11px;color:var(--muted)}
+.connection-status{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);white-space:nowrap}.status-dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0}.connection-status.success{color:#2f875b}.connection-status.error{color:var(--danger)}.connection-status.pending{color:#a47a27}.model-exposure{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}.model-hidden td{color:var(--muted)}
 .connection-actions{display:flex;gap:6px}
 .add-another{border:1px dashed #d5dbe1;background:transparent;border-radius:6px;width:100%;padding:12px;color:var(--muted);font-size:12px}
 .add-another:hover{background:var(--soft)}
@@ -166,7 +166,7 @@ main{margin-left:160px;padding:26px 23px}
 .endpoint-controls select{max-width:230px}
 .endpoint-table td,.endpoint-table th{padding:9px 11px}
 .endpoint-table td code{font-size:10px}
-.connection-card .connection-status{display:none}
+.connection-card .connection-status .status-label{display:none}
 }
 @media(max-width:760px){.sidebar{width:135px}
 main{margin-left:135px;padding:20px 16px}

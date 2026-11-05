@@ -1,3 +1,4 @@
+import { connectionState } from './connection-state.js';
 declare global { interface Window { modelBridge: { call: (operation: string, payload?: unknown) => Promise<any> } } }
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 const escape = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -11,6 +12,7 @@ let selectedAddress = '';
 const clientTabs = [{ id: 'codex', name: 'Codex' }, { id: 'claude', name: 'Claude Code' }];
 let clientTab = 'codex'; let clientBusy = false;
 let connectionSource = 'login'; let connectionSaving = false; let reuseSnapshot = '';
+let loginStarting = false; let loginAttempt = 0;
 let portableClient = 'codex'; let portableAddress = ''; let portableRevision = 0;
 
 async function call(operation: string, payload?: unknown) { return window.modelBridge.call(operation, payload); }
@@ -48,20 +50,20 @@ function connections() {
     return `<section class="connection-group"><div class="group-label">${escape(name)} <span>${group.length} 个连接</span></div><div class="panel connection-list">${group.map((c: any) => {
       const login = state.logins[c.id]; const discovery = state.discoveries[c.id];
       const detail = c.auth === 'subscription' ? (login?.account ?? c.accountEmail ?? '订阅账号') + ' · ' + (c.region === 'global' ? '国际区' : '中国区') : c.auth === 'chatgpt-device' ? (login?.account ?? c.accountEmail ?? (c.accountId ? 'ChatGPT 账号' : '尚未登录')) + ' · ' + (c.loginMethod === 'browser' ? '官方登录' : '设备码登录') : c.auth === 'none' ? '本地服务' : 'API Key';
-      const status = discovery?.phase === 'loading' ? '同步中' : login?.phase === 'error' ? '需重新登录' : discovery?.phase === 'error' ? '同步失败' : !c.enabled ? '已停用' : ['chatgpt-device', 'subscription'].includes(c.auth) && !c.accountId && !c.credentialVersion && login?.phase !== 'authenticated' ? '待登录' : '已启用';
-      return `<div class="connection-card" data-connection-id="${escape(c.id)}"><div class="provider-icon">${escape(name[0])}</div><div class="connection-description"><h3>${escape(c.name)}</h3><small>${escape(detail)} · ${c.models.length} 个模型${discovery?.source === 'preset' ? ' · 官方预置目录，权限以套餐为准' : ''}</small></div><span class="connection-status">${status}</span><div class="connection-actions">${['chatgpt-device', 'subscription'].includes(c.auth) && ['待登录', '需重新登录'].includes(status) ? `<button class="plain" data-action="login" data-id="${escape(c.id)}">登录</button>` : ''}<button class="secondary" data-action="edit" data-id="${escape(c.id)}">管理</button></div></div>`;
+      const health = connectionState(c, login, discovery, state.connectionChecks?.[c.id]); const status = health.label;
+      return `<div class="connection-card" data-connection-id="${escape(c.id)}"><div class="provider-icon">${escape(name[0])}</div><div class="connection-description"><h3>${escape(c.name)}</h3><small>${escape(detail)} · ${c.models.length} 个模型${discovery?.source === 'preset' ? ' · 官方预置目录，权限以套餐为准' : ''}</small></div><span class="connection-status ${health.tone}" title="${escape(health.detail ?? status)}" aria-label="${escape(status)}"><span class="status-dot" aria-hidden="true"></span><span class="status-label">${status}</span></span><div class="connection-actions">${['chatgpt-device', 'subscription'].includes(c.auth) && ['待登录', '需重新登录'].includes(status) ? `<button class="plain" data-action="login" data-id="${escape(c.id)}">登录</button>` : ''}<button class="secondary" data-action="edit" data-id="${escape(c.id)}">管理</button></div></div>`;
     }).join('')}</div></section>`;
   }).join('') + '<button class="add-another" data-action="add-connection">＋ 添加其他账号或 API 服务</button>';
 }
 function modelsTable() {
-  const catalog = state.modelCatalog ?? [];
+  const catalog = state.managedModels ?? state.modelCatalog ?? [];
   if (!catalog.length) return '<div class="panel empty"><h3>暂无模型</h3><p>添加连接后自动获取，也可手动添加模型。</p></div>';
-  return `<div class="panel table-wrap"><table><thead><tr><th>模型</th><th>服务商</th><th>账号</th><th></th></tr></thead><tbody>${catalog.map((entry: any) => `<tr><td><strong>${escape(entry.name)}</strong></td><td>${escape(providerNames[entry.provider])}</td><td>${entry.members.length} 个账号${entry.members.length > 1 ? ' · 自动分发' : ''}</td><td><button class="secondary" data-action="pool-details" data-id="${escape(entry.id)}">查看</button></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="panel table-wrap"><table><thead><tr><th>对外提供</th><th>模型</th><th>服务商</th><th>账号</th><th></th></tr></thead><tbody>${catalog.map((entry: any) => `<tr class="${entry.exposedAccounts ? '' : 'model-hidden'}"><td><input class="model-exposure" type="checkbox" data-model-exposure="${escape(entry.id)}" aria-label="对外提供 ${escape(entry.name)}" ${entry.enabled ? 'checked' : ''} /></td><td><strong>${escape(entry.name)}</strong></td><td>${escape(providerNames[entry.provider])}</td><td>${entry.exposedAccounts ?? entry.members.length} / ${entry.members.length} 个账号对外${entry.members.length > 1 ? ' · 自动分发' : ''}</td><td><button class="secondary" data-action="pool-details" data-id="${escape(entry.id)}">查看</button></td></tr>`).join('')}</tbody></table></div>`;
 }
 function showPool(id: string) {
-  const entry = state.modelCatalog.find((e: any) => e.id === id); if (!entry) return;
+  const entry = (state.managedModels ?? state.modelCatalog).find((e: any) => e.id === id); if (!entry) return;
   $('#pool-title').textContent = entry.name;
-  $('#pool-content').innerHTML = `<p class="hint">${escape(providerNames[entry.provider])} · ${entry.members.length} 个账号${entry.members.length > 1 ? ' · 新对话轮流分配' : ''}</p><div class="pool-members">${entry.members.map((member: any) => `<div class="pool-member"><div><strong>${escape(member.name)}</strong><small>${escape(member.model)}</small></div><button class="plain" data-action="model-edit" data-id="${escape(member.connectionId)}" data-model="${escape(member.modelId)}">模型设置</button></div>`).join('')}</div><p class="hint">同一对话的消息、thinking 和工具结果始终回到原账号。原账号不可用时会提示处理。</p>`;
+  $('#pool-content').innerHTML = `<p class="hint">${escape(providerNames[entry.provider])} · ${entry.exposedAccounts ?? entry.members.length} / ${entry.members.length} 个账号对外${entry.members.length > 1 ? ' · 新对话轮流分配' : ''}</p><div class="pool-members">${entry.members.map((member: any) => `<div class="pool-member"><div><strong>${escape(member.name)}</strong><small>${escape(member.model)}</small></div><button class="plain" data-action="model-edit" data-id="${escape(member.connectionId)}" data-model="${escape(member.modelId)}">模型设置</button></div>`).join('')}</div><p class="hint">同一对话的消息、thinking 和工具结果始终回到原账号。原账号不可用时会提示处理。</p>`;
   $<HTMLDialogElement>('#pool-dialog').showModal();
 }
 function clientsPage() {
@@ -121,6 +123,7 @@ function render() {
     $('#content .intro').after(filters);
     filters.querySelectorAll<HTMLSelectElement>('select').forEach(select => { select.value = usageFilters[select.dataset.filter!] ?? ''; select.onchange = () => { usageFilters[select.dataset.filter!] = select.value; void refresh(); }; });
   }
+  if (page === 'models') document.querySelectorAll<HTMLInputElement>('[data-model-exposure]').forEach(input => { input.indeterminate = state.managedModels?.find((entry: any) => entry.id === input.dataset.modelExposure)?.mixed === true; });
   if (page === 'usage') { const select = $<HTMLSelectElement>('#days'); select.value = String(days); select.onchange = () => { days = Number(select.value); void refresh(); }; }
 }
 async function refresh() {
@@ -135,15 +138,28 @@ async function refresh() {
 function updateLogin() {
   if (!activeLogin || !$<HTMLDialogElement>('#login-dialog').open) return;
   const connection = state.config.connections.find((c: any) => c.id === activeLogin);
-  const login = state.logins[activeLogin] ?? { phase: 'starting' };
+  const login = loginStarting ? {phase:'starting'} : state.logins[activeLogin] ?? { phase: 'starting' };
   const method = login.method ?? connection?.loginMethod;
   const discovery = state.discoveries[activeLogin];
   const provider = providerNames[connection?.provider] ?? 'ChatGPT';
   const subscription = connection?.auth === 'subscription';
   $('#login-provider').textContent = subscription ? provider : 'CHATGPT';
   $('#login-title').textContent = subscription ? provider + ' 订阅登录' : method === 'browser' ? 'ChatGPT 官方登录' : 'ChatGPT 设备码登录';
+  if (login.phase === 'authenticated') {
+    activeLogin = undefined; loginStarting = false; loginAttempt++;
+    $<HTMLDialogElement>('#login-dialog').close();
+    toast(discovery?.phase === 'ready' ? '账号已连接，已加载 ' + discovery.count + ' 个模型' : discovery?.phase === 'error' ? '授权已完成，模型同步失败，请在连接中重试' : '账号已连接，模型目录正在同步', discovery?.phase === 'error');
+    return;
+  }
   $('#login-content').innerHTML = login.phase === 'waiting' && method === 'browser' ? '<div class="empty"><h3>在浏览器完成登录</h3><p>授权完成后会自动连接。添加其他账号时，请在授权页选择对应账号。</p></div>' : login.phase === 'waiting' ? `<p class="hint">打开授权页面，登录 ${escape(provider)} 并按页面提示确认授权。</p><div class="device-code">${escape(login.userCode)}</div><p class="hint">${escape(login.verificationUrl)}${subscription ? '' : '<br>如果设备码登录未启用，请在 ChatGPT 安全设置或工作区权限中开启。'}</p>` : login.phase === 'authenticated' ? `<div class="empty"><h3>账号已连接</h3><p>${escape(login.account)}</p><p>${discovery?.phase === 'ready' ? '已加载 ' + discovery.count + ' 个模型。' : discovery?.phase === 'error' ? '账号授权已完成，模型同步失败：' + escape(discovery.message) : '正在加载模型目录…'}</p></div>` : `<div class="empty">${escape(login.error ?? (login.phase === 'cancelled' ? '登录已取消' : login.phase === 'idle' ? '当前未发起登录，请关闭窗口后重新授权。' : '正在启动登录…'))}</div>`;
   $<HTMLButtonElement>('#open-login').disabled = login.phase !== 'waiting';
+}
+async function showLogin(id: string) {
+  const attempt = ++loginAttempt; activeLogin = id; loginStarting = true;
+  $<HTMLDialogElement>('#login-dialog').showModal(); updateLogin();
+  try { const result = await action('device.login', {id}); if (attempt === loginAttempt) state.logins[id] = result; }
+  catch (error: any) { if (attempt === loginAttempt) state.logins[id] = {phase:'error',error:error.message}; }
+  finally { if (attempt === loginAttempt) { loginStarting = false; updateLogin(); } }
 }
 function updateReuse() {
   if (!$<HTMLDialogElement>('#connection-dialog').open || connectionSource !== 'reuse') return;
@@ -243,7 +259,7 @@ document.addEventListener('click', event => {
       if (operation === 'detect-local') await action('local.detect', {}, '本机账号检测已完成');
       if (operation === 'import-local') { await action('local.import', { id }, '已复用本机账号，正在自动获取模型'); $<HTMLDialogElement>('#connection-dialog').close(); }
       if (operation === 'discover') await action('connection.discover', { id }, '模型目录已同步');
-      if (operation === 'login') { $<HTMLDialogElement>('#connection-dialog').close(); activeLogin = id; $<HTMLDialogElement>('#login-dialog').showModal(); updateLogin(); await action('device.login', { id }); }
+      if (operation === 'login') { $<HTMLDialogElement>('#connection-dialog').close(); await showLogin(id!); }
       if (operation === 'delete' && confirm('移除此连接及其模型？此账号的已有对话将不可继续。')) { await action('connection.delete', { id }, '连接已移除'); $<HTMLDialogElement>('#connection-dialog').close(); }
       if (operation === 'portable-config') { portableClient = clientTab; portableAddress = ''; $<HTMLSelectElement>('#portable-platform').value = navigator.userAgent.includes('Windows') ? 'windows' : 'macos'; $<HTMLDialogElement>('#portable-dialog').showModal(); await updatePortableConfig(); }
       if (target.dataset.portable) {
@@ -275,7 +291,7 @@ $<HTMLFormElement>('#connection-form').onsubmit = event => {
     const id = editing?.id ?? `account-${crypto.randomUUID().slice(0, 8)}`; const loginMethod = field('auth') === 'chatgpt-browser' ? 'browser' : 'device'; const auth = field('auth').startsWith('chatgpt-') ? 'chatgpt-device' : field('auth'); const protocol = field('protocol');
     const existing = new Map((editing?.models ?? []).map((m: any) => [m.upstreamId, m]));
     const models = [...new Set(field('modelIds').split('\n').map(x => x.trim()).filter(Boolean))].map(model => ({ ...(existing.get(model) as object ?? { id: model, name: model, upstreamId: model }), protocols: auth === 'subscription' ? [field('provider') === 'minimax' ? 'messages' : 'chat'] : auth === 'chatgpt-device' ? ['responses'] : protocol === 'all' ? ['responses', 'messages', 'chat'] : [protocol] }));
-    try { await action('connection.save', { connection: { ...editing, id, name: field('name'), provider: field('provider'), auth, loginMethod, region: field('region') || 'cn', enabled: editing ? form.get('enabled') === 'on' : true, baseUrl: auth === 'chatgpt-device' ? 'https://chatgpt.com/backend-api/codex' : auth === 'subscription' ? field('provider') === 'kimi' ? (field('region') === 'global' ? 'https://api.kimi.ai/coding/v1' : 'https://api.kimi.com/coding/v1') : (field('region') === 'global' ? 'https://agent.minimax.io/mavis/api/v1/llm/v1' : 'https://agent.minimax.cn/mavis/api/v1/llm/v1') : field('baseUrl'), proxy: proxyChoice(field('proxy')), models }, apiKey: auth === 'api-key' ? field('apiKey') : undefined }, '连接已保存'); $<HTMLDialogElement>('#connection-dialog').close(); if (['chatgpt-device', 'subscription'].includes(auth) && !editing) { activeLogin = id; $<HTMLDialogElement>('#login-dialog').showModal(); updateLogin(); await action('device.login', { id }); } } catch { /* shown */ } finally { connectionSaving = false; $<HTMLButtonElement>('#save-connection').disabled = false; }
+    try { await action('connection.save', { connection: { ...editing, id, name: field('name'), provider: field('provider'), auth, loginMethod, region: field('region') || 'cn', enabled: editing ? form.get('enabled') === 'on' : true, baseUrl: auth === 'chatgpt-device' ? 'https://chatgpt.com/backend-api/codex' : auth === 'subscription' ? field('provider') === 'kimi' ? (field('region') === 'global' ? 'https://api.kimi.ai/coding/v1' : 'https://api.kimi.com/coding/v1') : (field('region') === 'global' ? 'https://agent.minimax.io/mavis/api/v1/llm/v1' : 'https://agent.minimax.cn/mavis/api/v1/llm/v1') : field('baseUrl'), proxy: proxyChoice(field('proxy')), models }, apiKey: auth === 'api-key' ? field('apiKey') : undefined }, '连接已保存'); $<HTMLDialogElement>('#connection-dialog').close(); if (['chatgpt-device', 'subscription'].includes(auth) && !editing) { await showLogin(id!); } } catch { /* shown */ } finally { connectionSaving = false; $<HTMLButtonElement>('#save-connection').disabled = false; }
   })();
 };
 $<HTMLFormElement>('#proxy-form').onsubmit = event => {
@@ -303,12 +319,22 @@ $<HTMLFormElement>('#model-form').onsubmit = event => {
   void action('connection.save', { connection, autoDiscover: false }, '模型设置已保存').then(() => $<HTMLDialogElement>('#model-dialog').close()).catch(() => {});
 };
 $('#cancel-login').onclick = () => void action('device.cancel', { id: activeLogin }).then(() => $<HTMLDialogElement>('#login-dialog').close()).catch(() => {});
-$<HTMLDialogElement>('#login-dialog').addEventListener('close', () => { if (activeLogin && ['starting', 'waiting'].includes(state.logins[activeLogin]?.phase)) void action('device.cancel', { id: activeLogin }).catch(() => {}); });
+$<HTMLDialogElement>('#login-dialog').addEventListener('close', () => {
+  const id = activeLogin; if (!id) return;
+  const pending = loginStarting || ['starting', 'waiting'].includes(state.logins[id]?.phase);
+  activeLogin = undefined; loginStarting = false; loginAttempt++;
+  if (pending) void action('device.cancel', {id}).catch(() => {});
+});
 $<HTMLSelectElement>('#portable-address').onchange = event => { portableAddress = (event.target as HTMLSelectElement).value; void updatePortableConfig(); };
 $<HTMLInputElement>('#portable-lan').onchange = event => {
   const input = event.target as HTMLInputElement; input.disabled = true;
   void action('service.lan', { enabled: input.checked }).then(() => updatePortableConfig(true)).catch(() => { input.checked = state.config.listenHost === '0.0.0.0'; }).finally(() => input.disabled = false);
 };
+document.addEventListener('change', event => {
+  const input = event.target as HTMLInputElement; if (!input.matches('input[data-model-exposure]')) return;
+  const enabled = input.checked; input.disabled = true;
+  void action('model.exposure', {id:input.dataset.modelExposure,enabled}, enabled ? '模型已对外提供' : '模型已停止对外提供').catch(() => { input.checked = !enabled; }).finally(() => { input.disabled = false; });
+});
 const navIcons: Record<string, string> = {"connections": "<path d=\"M7 3v4m6-4v4M5 7h10v3a5 5 0 0 1-5 5v3M3 7h14\"/>", "models": "<path d=\"m10 2 8 5-8 5-8-5 8-5Zm-8 9 8 5 8-5M2 15l8 5 8-5\"/>", "clients": "<rect x=\"2\" y=\"3\" width=\"16\" height=\"14\" rx=\"2\"/><path d=\"m5 7 3 3-3 3m6 0h4\"/>", "usage": "<path d=\"M3 17V9m7 8V3m7 14v-6\"/>"};
 document.querySelectorAll<HTMLButtonElement>('nav [data-page]').forEach(button => { button.querySelector('span')!.innerHTML = `<svg viewBox="0 0 20 22" aria-hidden="true">${navIcons[button.dataset.page!] ?? ''}</svg>`; });
 void refresh(); setInterval(() => { if (!clientBusy && !connectionSaving && !document.querySelector('select:focus') && !window.getSelection()?.toString()) void refresh(); }, 4000);

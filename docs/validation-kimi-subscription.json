@@ -1,0 +1,106 @@
+{
+  "createdAt": "2026-11-05T08:59:05.707Z",
+  "codexVersion": "0.144.1",
+  "transport": "isolated Codex CLI app-server -> local Model Bridge gateway -> official Kimi subscription endpoint",
+  "nativeClientFilesUnchanged": true,
+  "credentialHandling": "Provider credentials remained in the encrypted gateway vault. The test used only a local gateway client key.",
+  "results": [
+    {
+      "provider": "kimi-subscription-kimi-for-coding",
+      "model": "subscription/kimi-for-coding",
+      "upstreamHost": "api.kimi.com",
+      "upstreamModel": "kimi-for-coding",
+      "upstreamProtocol": "chat",
+      "downstreamProtocol": "responses",
+      "thinkingProbe": true,
+      "validationKind": "real-codex-live-gateway",
+      "gatewayHost": "127.0.0.1",
+      "status": "passed",
+      "turns": 3,
+      "toolCalls": 3,
+      "requests": 5,
+      "encryptedReasoningReceived": 5,
+      "encryptedReasoningReplayed": 10,
+      "nativeReasoningReceived": 0,
+      "nativeReasoningReplayed": 0,
+      "toolResultsReplayed": 8,
+      "tokenUsage": {
+        "input": 29787,
+        "output": 808,
+        "reasoning": 419
+      },
+      "httpStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ]
+    },
+    {
+      "provider": "kimi-subscription-kimi-for-coding-highspeed",
+      "model": "subscription/kimi-for-coding-highspeed",
+      "upstreamHost": "api.kimi.com",
+      "upstreamModel": "kimi-for-coding-highspeed",
+      "upstreamProtocol": "chat",
+      "downstreamProtocol": "responses",
+      "thinkingProbe": true,
+      "validationKind": "real-codex-live-gateway",
+      "gatewayHost": "127.0.0.1",
+      "status": "passed",
+      "turns": 3,
+      "toolCalls": 3,
+      "requests": 5,
+      "encryptedReasoningReceived": 5,
+      "encryptedReasoningReplayed": 10,
+      "nativeReasoningReceived": 0,
+      "nativeReasoningReplayed": 0,
+      "toolResultsReplayed": 8,
+      "tokenUsage": {
+        "input": 27825,
+        "output": 849,
+        "reasoning": 583
+      },
+      "httpStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ]
+    },
+    {
+      "provider": "kimi-subscription-k3-1-pro",
+      "model": "subscription/k3.1-pro",
+      "upstreamHost": "api.kimi.com",
+      "upstreamModel": "k3.1-pro",
+      "upstreamProtocol": "chat",
+      "downstreamProtocol": "responses",
+      "thinkingProbe": true,
+      "validationKind": "real-codex-live-gateway",
+      "gatewayHost": "127.0.0.1",
+      "status": "passed",
+      "turns": 3,
+      "toolCalls": 3,
+      "requests": 6,
+      "encryptedReasoningReceived": 6,
+      "encryptedReasoningReplayed": 15,
+      "nativeReasoningReceived": 0,
+      "nativeReasoningReplayed": 0,
+      "toolResultsReplayed": 10,
+      "tokenUsage": {
+        "input": 36042,
+        "output": 744,
+        "reasoning": 307
+      },
+      "httpStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ]
+    }
+  ]
+}

@@ -21,7 +21,7 @@ it.each(['kimi', 'minimax'] as const)('discovers and calls %s through its region
     const headers = new Headers(init?.headers); expect(headers.get('authorization')).toBe('Bearer private-subscription-token');
     if (url.endsWith('/models')) {
       if (provider === 'minimax') return new Response('', { status: 404 });
-      return Response.json({ data: [{ id: model, protocol: 'anthropic', display_name: 'Fixture', limit: { context: 200000 }, supports_tool_use: true, modalities: { input: ['text'] } }] });
+      return Response.json({ data: [{ id: model, protocol: 'anthropic', display_name: 'Fixture', limit: { context: 200000 }, reasoning: {type:'both',effort:{valid:['low','medium','high'],default:'medium'}}, supports_tool_use: true, modalities: { input: ['text'] } }] });
     }
     expect(url).toBe(endpoints.base + '/messages' + (provider === 'kimi' ? '?beta=true' : ''));
     expect(headers.get('x-api-key')).toBeNull();
@@ -36,6 +36,7 @@ it.each(['kimi', 'minimax'] as const)('discovers and calls %s through its region
   const token = await runtime.ensureClient('codex');
   const response = await fetch(runtime.gateway.address + '/v1/responses', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: provider + '/' + model, input: 'Reply with the fixture.', reasoning: { effort: 'medium' }, stream: false }) });
   expect(response.status).toBe(200); expect(await response.text()).toContain('SUBSCRIPTION_OK'); expect(requests).toBe(1);
+  await vi.waitFor(()=>expect(runtime.connectionStates()[provider]?.phase).toBe('ready'));
   // A provider authorization failure must remain an error, never become a preset success.
   vi.mocked(runtime.network.request).mockResolvedValue(new Response('', { status: 401 }));
   if (provider === 'kimi') {
@@ -43,6 +44,8 @@ it.each(['kimi', 'minimax'] as const)('discovers and calls %s through its region
   } else {
     const rejected = await fetch(runtime.gateway.address + '/v1/responses', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: provider + '/' + model, input: 'test', stream: false }) });
     expect(rejected.status).toBe(401);
+    await vi.waitFor(()=>expect(runtime.connectionStates()[provider]?.phase).toBe('error'));
+    expect(runtime.connectionStates()[provider]?.message).toContain('401');
   }
 });
 

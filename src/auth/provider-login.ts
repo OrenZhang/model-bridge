@@ -11,16 +11,20 @@ export function subscriptionEndpoints(provider: string, region: 'cn' | 'global' 
   if (provider === 'minimax') return { host: region === 'cn' ? 'https://account.minimax.cn' : 'https://account.minimax.io', device: '/oauth2/device/code', token: '/oauth2/token', client: 'mcode-public', base: region === 'cn' ? 'https://agent.minimax.cn/mavis/api/v1/llm/v1' : 'https://agent.minimax.io/mavis/api/v1/llm/v1' };
   throw new Error('This provider does not support subscription login.');
 }
-interface Tokens { access: string; refresh: string; expires: number; accountId?: string; account?: string }
+interface Tokens { access: string; refresh: string; expires: number; accountId?: string; account?: string; subject?: string }
 const text = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && !/[\u0000-\u001f\u007f]/.test(v);
 function claims(token: string): any { try { return JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString()); } catch { return {}; } }
 function tokenGrant(data: any, provider: string, previous?: Tokens): Tokens {
-  const access = data.access_token; const refresh = data.refresh_token ?? previous?.refresh; const seconds = Number(data.expires_in);
+  const access = data.access_token; const refresh = data.refresh_token ?? (provider === 'minimax' ? previous?.refresh : undefined); const seconds = Number(data.expires_in);
   if (!text(access) || !text(refresh) || !Number.isFinite(seconds) || seconds <= 0 || data.token_type && String(data.token_type).toLowerCase() !== 'bearer') throw new Error('Invalid OAuth token response.');
   const hint = claims(access);
+  const subject = text(hint.sub) ? hint.sub : undefined;
+  const previousSubject = previous?.subject ?? (previous ? claims(previous.access).sub : undefined);
+  if (provider === 'kimi' && previousSubject && subject && previousSubject !== subject) throw new BridgeError(409, 'account_identity_changed', '刷新返回了不同的 Kimi 账号，请重新授权。');
   const scopes = data.scope ?? hint.scope ?? hint.scp;
   if (provider === 'minimax' && (!(typeof scopes === 'string' ? scopes.split(/\s+/) : Array.isArray(scopes) ? scopes : []).includes('agent.default') || hint.aud && !(Array.isArray(hint.aud) ? hint.aud : [hint.aud]).includes('agent-backend'))) throw new Error('MiniMax did not grant the required agent-backend scope.');
-  return { access, refresh, expires: Date.now() + seconds * 1000, ...(text(hint.account_id ?? hint.sub) ? { accountId: hint.account_id ?? hint.sub } : previous?.accountId ? { accountId: previous.accountId } : {}), ...(text(hint.email) ? { account: hint.email } : previous?.account ? { account: previous.account } : {}) };
+  const accountId = provider === 'kimi' && previous?.accountId ? previous.accountId : text(hint.account_id ?? hint.sub) ? hint.account_id ?? hint.sub : previous?.accountId;
+  return { access, refresh, expires: Date.now() + seconds * 1000, ...(accountId ? { accountId } : {}), ...(subject ? { subject } : {}), ...(previous?.account ? {account:previous.account} : text(hint.email) ? { account: hint.email } : {}) };
 }
 
 /** Independent per-connection OAuth session. Refresh credentials stay in the OS vault. */
@@ -28,6 +32,7 @@ export class ProviderLogin extends EventEmitter {
   state: LoginState = { phase: 'idle' };
   private endpoints;
   private controller?: AbortController;
+  private refreshAbort = new AbortController();
   private generation = 0;
   private refreshTask?: Promise<Tokens>;
   private writes: Promise<unknown> = Promise.resolve();
@@ -73,6 +78,7 @@ export class ProviderLogin extends EventEmitter {
   async login() {
     if (['starting', 'waiting'].includes(this.state.phase)) return this.state;
     const generation = ++this.generation;
+    this.refreshAbort.abort(); this.refreshAbort = new AbortController(); this.refreshTask = undefined;
     const controller = new AbortController(); this.controller = controller;
     this.publish({ phase: 'starting', method: 'device' });
     try {
@@ -106,7 +112,7 @@ export class ProviderLogin extends EventEmitter {
       const tokens = tokenGrant(data, this.connection.provider);
       if (this.connection.provider === 'kimi') {
         try {
-          const profile = await this.network.request(this.connection, this.endpoints.base + '/me', { headers: { authorization: `Bearer ${tokens.access}`, 'user-agent': 'ModelBridge/0.1.0' }, signal });
+          const profile = await this.network.request(this.connection, this.endpoints.base + '/me', { headers: { authorization: `Bearer ${tokens.access}`, 'user-agent': 'ModelBridge/0.1.0' }, signal: AbortSignal.any([signal,AbortSignal.timeout(15000)]) });
           if (profile.ok) { const p = await profile.json() as any; if (text(p.user_id)) tokens.accountId = p.user_id; if (text(p.email ?? p.nickname)) tokens.account = p.email ?? p.nickname; }
           else await profile.body?.cancel();
         } catch { signal.throwIfAborted(); /* Profile hints are optional. */ }
@@ -128,14 +134,26 @@ export class ProviderLogin extends EventEmitter {
     if (['starting', 'waiting'].includes(this.state.phase)) throw new BridgeError(503, 'login_in_progress', '此账号正在重新授权，请完成或取消后重试。');
     if (this.refreshTask) return this.refreshTask;
     const generation = this.generation;
+    const refreshSignal = this.refreshAbort.signal;
     const task = (async () => {
       const raw = await this.secrets.get(this.ref); let value: Tokens;
       try { value = JSON.parse(raw ?? 'null'); } catch { throw new BridgeError(401, 'login_required', '请先登录此订阅账号。'); }
       if (!value || !text(value.access) || !text(value.refresh) || !Number.isFinite(value.expires)) throw new BridgeError(401, 'login_required', '请先登录此订阅账号。');
       if (value.expires <= Date.now() + 60000) {
-        const result = await this.form(this.endpoints.token, { client_id: this.endpoints.client, grant_type: 'refresh_token', refresh_token: value.refresh, ...(this.connection.provider === 'minimax' ? { scope: 'agent.default', audience: 'agent-backend' } : {}) });
-        if (!result.ok) throw new BridgeError(result.status === 400 || result.status === 401 || result.status === 403 ? 401 : 503, 'login_refresh_failed', '订阅凭据刷新失败，请稍后重试或重新登录。');
-        value = tokenGrant(result.data, this.connection.provider, value); await this.store(value, generation);
+        let result;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            result = await this.form(this.endpoints.token, { client_id: this.endpoints.client, grant_type: 'refresh_token', refresh_token: value.refresh, ...(this.connection.provider === 'minimax' ? { scope: 'agent.default', audience: 'agent-backend' } : {}) }, refreshSignal);
+            if (this.connection.provider !== 'kimi' || result.data.error === 'invalid_grant' || ![429, 500, 502, 503, 504].includes(result.status) || attempt === 2) break;
+          } catch (error) { if (this.connection.provider !== 'kimi' || attempt === 2 || generation !== this.generation) throw error; }
+          if (generation !== this.generation) throw new BridgeError(401, 'login_cancelled', '账号状态已更改，请重试。');
+          await this.pause(1000 * 2 ** attempt, refreshSignal);
+        }
+        if (!result) throw new BridgeError(503, 'login_refresh_failed', '订阅凭据刷新失败，请稍后重试。');
+        if (!result.ok || result.data.error === 'invalid_grant') throw new BridgeError(result.data.error === 'invalid_grant' || result.status === 400 || result.status === 401 || result.status === 403 ? 401 : 503, 'login_refresh_failed', '订阅凭据刷新失败，请稍后重试或重新登录。');
+        const refreshed = tokenGrant(result.data, this.connection.provider, value);
+        if (this.connection.accountId && refreshed.accountId && this.connection.accountId !== refreshed.accountId) throw new BridgeError(409, 'account_identity_changed', '订阅账号身份已更改，请重新连接后开始新对话。');
+        value = refreshed; await this.store(value, generation);
       }
       if (this.connection.accountId && value.accountId && this.connection.accountId !== value.accountId) throw new BridgeError(409, 'account_identity_changed', '订阅账号身份已更改，请重新连接后开始新对话。');
       if (generation !== this.generation) throw new BridgeError(401, 'login_cancelled', '账号登录状态已更改，请重试。');
@@ -145,6 +163,6 @@ export class ProviderLogin extends EventEmitter {
     try { return await task; } finally { if (this.refreshTask === task) this.refreshTask = undefined; }
   }
   async cancel() { this.close(); return this.state; }
-  close() { this.generation++; this.controller?.abort(); if (['starting', 'waiting'].includes(this.state.phase)) this.publish({ phase: 'cancelled' }); }
+  close() { this.generation++; this.controller?.abort(); this.refreshAbort.abort(); if (['starting', 'waiting'].includes(this.state.phase)) this.publish({ phase: 'cancelled' }); }
   async logout() { this.close(); await this.store(null, this.generation); this.publish({ phase: 'idle' }); }
 }

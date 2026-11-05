@@ -2,7 +2,7 @@
 
 一个在本机运行、可选向局域网提供服务的模型入口，把 ChatGPT、Kimi、MiniMax 和兼容服务接入 Codex、Claude Code 与其他 Agent。
 
-**当前版本：`0.1.0-alpha.1`，开发预览。** 真实 Codex 已通过 Kimi Coding、MiniMax M2.7 的多轮与工具调用验证；ChatGPT 账号完整联调与 Windows 实机验收尚未完成。兼容范围见下表。
+**当前版本：`0.1.0-alpha.1`，开发预览。** 真实 Codex 已通过 ChatGPT 账号、OpenAI API Key、Kimi / MiniMax 订阅及 API Key 的多轮与工具调用验证；Windows 实机验收尚未完成。兼容范围见下表。
 
 ## 使用方式
 
@@ -19,7 +19,7 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 - **统一模型**：客户端连接本地网关，使用所有已接入服务商的模型。服务商认证由网关管理，Codex 使用 `requires_openai_auth = false`，不再要求客户端额外登录 OpenAI；网关仍验证本地访问密钥，上游仍使用已授权凭据。
 - **原始认证**：恢复接入前的客户端连接和认证设置，继续使用原账号。模式切换不改写原有登录文件；保留用户后来修改的不相关设置。
 
-服务商添加、账号登录和网络设置集中在“连接”，模型集中在“模型”。启用统一模型会自动汇总全部模型目录，无需再选定某个服务商。首次默认模型从可用模型中选取，之后在客户端选择模型；已打开的客户端可能需要重启。其他 Agent 使用总览中的统一接口地址和访问密钥接入。
+服务商添加、账号登录和网络设置集中在“连接”，模型集中在“模型”。模型默认全部对外提供，可在“模型”页取消勾选；隐藏项不会出现在模型接口、Codex 目录及新导出的配置中，直接请求也会被拒绝。同模型多账号一起切换，同步已有模型保留开关。启用统一模型会自动汇总已启用的模型目录，无需再选定某个服务商。首次默认模型从可用模型中选取，之后在客户端选择模型；已打开的客户端可能需要重启。其他 Agent 使用总览中的统一接口地址和访问密钥接入。
 
 **启用**会备份并写入本机客户端配置。旁边的**复制配置**可选择本机或局域网地址，选择 macOS / Windows 后复制执行脚本，也可复制原生配置或导出 ZIP；复制和导出不会改写本机客户端。脚本需 Node.js 18+，在接收端终端 / PowerShell 粘贴执行，自动备份并合并接入字段，保留其他设置及原始登录；Codex 模型目录一并写入。Codex 使用 `config.toml` 与 `codex-models.json` 两个文件，Claude Code 使用 `settings.json`。
 
@@ -33,7 +33,7 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 | --- | --- |
 | Windows / macOS 桌面界面 | Electron 实现，macOS 已启动检查；跨平台 CI 验证编译和测试，Windows 实机交互待验收 |
 | ChatGPT 登录 | 官方浏览器授权 / 设备码两种方式，复用随包官方 Codex helper；多账号独立目录，支持取消与刷新。两种真实授权启动及取消已验证，完整浏览器授权由账号本人完成 |
-| Kimi / MiniMax 订阅登录 | 官方设备授权、区域选择、独立账号与令牌刷新；授权启动已实测，完整套餐调用需要本人完成授权。MiniMax Code Token Plan 与开放平台 Coding Plan API Key 分开接入 |
+| Kimi / MiniMax 订阅登录 | 官方设备授权、区域选择、独立账号与令牌刷新；本人授权、重启恢复与真实 Codex 多轮、工具调用、thinking 续传均已实测。MiniMax Code Token Plan 与开放平台 Coding Plan API Key 分开接入 |
 | Kimi / MiniMax / Anthropic / 自定义服务 | API Key 与模型发现/手工配置；Kimi Coding Chat、MiniMax M2.7 Messages 已通过真实 Codex 跨协议多轮与工具调用 |
 | Responses / Messages / Chat Completions | 同协议透传，跨协议文本、JSON 工具调用和 thinking 历史转换；流式与 JSON 回退、取消、错误处理 |
 | 跨协议 thinking | 保留 Chat reasoning、Messages thinking/signature/redacted thinking、Responses 加密推理项；同一客户端与模型路由可在工具调用后完整回传 |

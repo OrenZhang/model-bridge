@@ -14,7 +14,7 @@ function setup(provider: 'kimi' | 'minimax', responder: (url: string, init: Requ
     const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(undefined); }, ms);
     signal.addEventListener('abort', abort, { once: true });
   }));
-  logins.push(login); return { login, request, values };
+  logins.push(login); return { login, request, values, connection };
 }
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 it('completes Kimi device login, honors pending polling and refreshes once for concurrent requests', async () => {
@@ -78,4 +78,39 @@ it('rejects an unrelated authorization page and wrong token audience without sav
   const wrongAudience = setup('minimax', url => url.endsWith('/device/code') ? json({ device_code: 'private', user_code: 'USER', verification_uri: 'https://account.minimax.cn/device', expires_in: 600, interval: 1 }) : json({ access_token: jwt({ aud: 'open-platform', scope: 'agent.default' }), refresh_token: 'private', token_type: 'Bearer', expires_in: 3600 }));
   await wrongAudience.login.login(); await vi.advanceTimersByTimeAsync(1100); expect(wrongAudience.login.state.phase).toBe('error'); expect(wrongAudience.values.size).toBe(0);
   expect(() => ConnectionSchema.parse({ id: 'a', name: 'A', provider: 'minimax', auth: 'subscription', baseUrl: 'https://api.minimax.io/anthropic/v1' })).toThrow('official');
+});
+
+it('keeps the Kimi profile identity distinct from JWT subject during refresh and restore', async () => {
+  vi.useFakeTimers();
+  const access = jwt({sub:'jwt-subject',email:'fixture@example.invalid'});
+  const {login,values,connection}=setup('kimi',()=>json({access_token:access,refresh_token:'rotated-refresh',expires_in:3600}));
+  values.set('subscription:kimi:cn:a',JSON.stringify({access:jwt({sub:'jwt-subject'}),refresh:'original-refresh',expires:Date.now()-1,accountId:'profile-user-id',account:'Profile label'}));
+  login.updateConnection({...connection,accountId:'profile-user-id'});
+  expect(await login.credentials()).toEqual({token:access});
+  const saved=JSON.parse(values.get('subscription:kimi:cn:a')!);expect(saved.accountId).toBe('profile-user-id');expect(saved.subject).toBe('jwt-subject');expect(saved.account).toBe('Profile label');
+  const authorized=vi.fn();login.on('authorized',authorized);await login.restore();
+  expect(login.state).toMatchObject({phase:'authenticated',accountId:'profile-user-id'});expect(authorized).not.toHaveBeenCalled();
+});
+it('does not save a rotated Kimi token with a changed principal or missing refresh token', async () => {
+  vi.useFakeTimers();
+  for(const result of [{access_token:jwt({sub:'different'}),refresh_token:'other-refresh',expires_in:3600},{access_token:jwt({sub:'same'}),expires_in:3600}]){
+    const {login,values}=setup('kimi',()=>json(result));
+    const original=JSON.stringify({access:jwt({sub:'same'}),refresh:'private-refresh',expires:Date.now()-1,accountId:'profile-user'});
+    values.set('subscription:kimi:cn:a',original);await expect(login.credentials()).rejects.toThrow();expect(values.get('subscription:kimi:cn:a')).toBe(original);
+  }
+});
+it('retries transient Kimi refresh failures once per shared refresh and never retries invalid_grant', async () => {
+  vi.useFakeTimers();let attempts=0;
+  const {login,values,request}=setup('kimi',()=>++attempts===1?json({},503):json({access_token:'refreshed',refresh_token:'rotated',expires_in:3600}));
+  values.set('subscription:kimi:cn:a',JSON.stringify({access:'old',refresh:'private-refresh',expires:Date.now()-1}));
+  const pending=Promise.all([login.credentials(),login.credentials()]);await vi.advanceTimersByTimeAsync(1100);
+  expect(await pending).toEqual([{token:'refreshed'},{token:'refreshed'}]);expect(request).toHaveBeenCalledTimes(2);
+  const rejected=setup('kimi',()=>json({error:'invalid_grant'},401));
+  rejected.values.set('subscription:kimi:cn:a',JSON.stringify({access:'old',refresh:'private-refresh',expires:Date.now()-1}));
+  await expect(rejected.login.credentials()).rejects.toThrow('刷新失败');expect(rejected.request).toHaveBeenCalledTimes(1);
+});
+it('cancels Kimi refresh retry backoff when the account session closes', async()=>{
+  vi.useFakeTimers();const{login,values,request}=setup('kimi',()=>json({},503));values.set('subscription:kimi:cn:a',JSON.stringify({access:'old',refresh:'private-refresh',expires:Date.now()-1}));
+  const result=login.credentials().catch(error=>error);await vi.advanceTimersByTimeAsync(1);login.close();await vi.advanceTimersByTimeAsync(5000);
+  expect(await result).toBeInstanceOf(Error);expect(request).toHaveBeenCalledTimes(1);
 });

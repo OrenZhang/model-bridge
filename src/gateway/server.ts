@@ -1,4 +1,5 @@
 import { PoolRouter } from './pool-router.js';
+import { kimiSubscriptionThinking } from '../auth/kimi-models.js';
 import { minimaxSubscriptionThinking } from '../auth/minimax-thinking.js';
 import { poolCandidates, reasoningScope } from '../core/model-pool.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -40,6 +41,7 @@ export interface GatewayOptions {
   subscriptionCredentials?: (connection: Connection) => Promise<{ token: string }>;
   chatgptCredentials?: (connection: Connection) => Promise<{ token: string; accountId: string; email?: string }>;
   onUsageError?: () => void;
+  onConnectionResult?: (connection: Connection, result: { ok: boolean; status?: number; code?: string }) => void;
   reasoningVault?: ReasoningVault;
   poolRouter?: PoolRouter;
 }
@@ -110,6 +112,7 @@ export async function startGateway(options: GatewayOptions) {
         payload = { ...payload, stream: true, store: false, instructions: payload.instructions ?? '' };
         if (typeof payload.input === 'string') payload.input = [{ role: 'user', content: [{ type: 'input_text', text: payload.input }] }];
       } else if (connection.auth === 'subscription') {
+        if (connection.provider === 'kimi') kimiSubscriptionThinking(payload, upstream, model, canonical ?? { effort: input.reasoning?.effort ?? input.reasoning_effort ?? input.output_config?.effort, thinking: input.thinking });
         if (connection.provider === 'minimax' && upstream === 'messages') minimaxSubscriptionThinking(payload, model.upstreamId, canonical ?? { effort: input.output_config?.effort, thinking: input.thinking });
         if (!options.subscriptionCredentials) throw new BridgeError(503, 'subscription_unavailable', 'Subscription login is unavailable.');
         const credentials = await options.subscriptionCredentials(connection);
@@ -191,12 +194,14 @@ export async function startGateway(options: GatewayOptions) {
       status = controller.signal.aborted ? 'cancelled' : 'error';
       const failure = error instanceof BridgeError ? error : new BridgeError(500, 'gateway_error', 'The gateway could not complete the request.');
       errorCode = failure.code;
+      if (route && status === 'error' && ['upstream_rejected', 'upstream_connection_failed', 'upstream_stream_incomplete', 'upstream_stream_required', 'credentials_missing', 'chatgpt_login_required', 'login_required', 'login_refresh_failed', 'account_identity_changed'].includes(failure.code)) options.onConnectionResult?.(route.connection, {ok:false,status:failure.status,code:failure.code});
       if (route && ['credentials_missing', 'chatgpt_login_required'].includes(failure.code)) poolRouter.rejected(route.connection.id, 401);
       if (!res.destroyed) {
         if (!res.headersSent) json(res, failure.status, errorBody(protocol, failure));
         else res.end(sse({ type: 'error', error: { type: failure.code, code: failure.code, message: failure.message } }, 'error'));
       }
     } finally {
+      if (route && status === 'success') options.onConnectionResult?.(route.connection, {ok:true});
       controller.abort(); inflight.delete(controller);
       if (route && protocol) await options.usage.append({ id: requestId, startedAt: new Date(Date.now() - (performance.now() - started)).toISOString(), clientId, connectionId: route.connection.id, provider: route.connection.provider, model: selected, upstreamModel: route.model.upstreamId, protocol, status, durationMs: Math.round(performance.now() - started), firstByteMs: firstByte, tokens, estimatedCostUsd: estimatedCost(route.model, tokens), ...(errorCode ? { errorCode } : {}) }).catch(() => options.onUsageError?.());
     }

@@ -7,12 +7,14 @@ import { ConnectionSchema, ModelSchema, BridgeError, type Connection } from './c
 import { Network, type SystemProxyResolver } from './network.js';
 import { UsageStore } from './usage.js';
 import { startGateway, tokenHash } from '../gateway/server.js';
+import { kimiSubscriptionModel } from '../auth/kimi-models.js';
 import { minimaxPresetModels } from '../auth/provider-models.js';
 import { ProviderLogin } from '../auth/provider-login.js';
 import { DeviceLogin } from '../auth/device-login.js';
 import { ClientConfiguration } from '../clients/configure.js';
 import { LocalCodexAccounts } from '../auth/local-codex.js';
 import { ManagedNetworks } from '../network/managed.js';
+import { managedModels } from './catalog.js';
 import { loadReasoningVault } from './reasoning-key.js';
 
 export async function createRuntime(directory: string, secrets: SecretStore, home: string, systemProxy?: SystemProxyResolver, codexExecutable?: string) {
@@ -47,6 +49,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   const localAccounts = new LocalCodexAccounts(home, process.env.CODEX_HOME, directory, () => store.get(), secrets);
   const logins = new Map<string, { signature: string; login: DeviceLogin }>();
   const subscriptions = new Map<string, { signature: string; login: ProviderLogin }>();
+  const connectionChecks = new Map<string, {phase:'ready'|'error';message?:string}>();
   function subscription(connection: Connection) {
     const signature = JSON.stringify([connection.auth, connection.provider, connection.region, connection.baseUrl, connection.proxy, store.get().defaultProxy, store.get().proxies, store.get().networkProfiles]);
     const previous = subscriptions.get(connection.id);
@@ -55,6 +58,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       const helper = new ProviderLogin(connection, network, secrets);
       helper.on('authorized', state => {
         if (state.phase === 'authenticated') {
+          connectionChecks.delete(connection.id);
           const update = store.update(config => { const current = config.connections.find(c => c.id === connection.id && c.auth === 'subscription' && c.region === connection.region && c.provider === connection.provider); if (!current) return; current.accountId = state.accountId; current.accountEmail = state.account; current.credentialVersion = randomBytes(12).toString('hex'); })
             .then(config => clients.updateCatalog(config)).then(() => scheduleDiscovery(connection.id)).catch(() => { discoveries.set(connection.id, { phase: 'error', message: '账号已登录，但身份信息保存失败，请重试。' }); });
           identityUpdates.add(update); void update.finally(() => identityUpdates.delete(update));
@@ -103,6 +107,10 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     const credentials = await subscription(current).credentials();
     if (store.get().connections.find(value => value.id === c.id)?.credentialVersion !== current.credentialVersion) throw new BridgeError(409, 'account_identity_changed', '账号登录状态已改变，请开始新对话。');
     return credentials;
+  }, onConnectionResult: (connection: Connection, result: {ok:boolean;status?:number;code?:string}) => {
+    const current = store.get().connections.find(c=>c.id===connection.id);
+    if (!current || current.credentialVersion!==connection.credentialVersion || current.baseUrl!==connection.baseUrl) return;
+    connectionChecks.set(connection.id,result.ok?{phase:'ready'}:{phase:'error',message:`最近调用失败${result.status ? '（HTTP '+result.status+'）' : ''}，请检查账号授权、模型权限和网络。`});
   }, onUsageError: () => { usageWriteFailed = true; } };
   let gateway = await startGateway(gatewayOptions);
   managed = new ManagedNetworks(directory, store, secrets, network, () => gateway.activeRequests() === 0 && discoveryTasks.size === 0 && ![...logins.values(), ...subscriptions.values()].some(value => ['starting', 'waiting'].includes(value.login.state.phase)));
@@ -134,6 +142,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       current.connections = [...current.connections.filter(c => c.id !== connection.id), connection];
     });
     if (authChanged) { logins.get(connection.id)?.login.close(); logins.delete(connection.id); subscriptions.get(connection.id)?.login.close(); subscriptions.delete(connection.id); }
+    if (authChanged || apiKey) connectionChecks.delete(connection.id);
     await clients.updateCatalog(config);
     if (autoDiscover && (!['chatgpt-device', 'subscription'].includes(connection.auth) || (connection.auth === 'subscription' ? subscriptions : logins).get(connection.id)?.login.state.phase === 'authenticated')) scheduleDiscovery(connection.id);
     return connection;
@@ -166,7 +175,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       } else {
         const data = await response.json() as any; const list = data.data ?? data.models;
         if (!Array.isArray(list)) throw new Error('服务商没有返回可识别的模型目录，可手动添加模型 ID。');
-        found = list.map((m: any) => ({ id: m.id ?? m.name, name: m.display_name ?? m.id ?? m.name, ...(connection.provider === 'kimi' ? { protocols: m.protocol === 'response' ? ['responses'] : m.protocol === 'anthropic' ? ['messages'] : ['chat'], images: m.modalities?.input?.includes('image') === true, tools: m.supports_tool_use !== false, contextWindow: Number(m.limit?.context ?? m.context_length) || 128000 } : {}) }));
+        found = connection.auth === 'subscription' && connection.provider === 'kimi' ? list.map(kimiSubscriptionModel).filter(Boolean) : list.map((m: any) => ({ id: m.id ?? m.name, name: m.display_name ?? m.id ?? m.name, ...(connection.provider === 'kimi' ? { protocols: m.protocol === 'response' ? ['responses'] : m.protocol === 'anthropic' ? ['messages'] : ['chat'], images: m.modalities?.input?.includes('image') === true, tools: m.supports_tool_use !== false, contextWindow: Number(m.limit?.context ?? m.context_length) || 128000 } : {}) }));
       }
     }
     found = found.filter(m => typeof m.id === 'string' && m.id.length > 0).slice(0, 300);
@@ -179,8 +188,12 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       const existing = new Map(latest.models.map(m => [m.upstreamId, m]));
       for (const m of found) {
         const previous = existing.get(m.id);
+        if (previous && connection.auth === 'subscription' && connection.provider === 'kimi') {
+          const refreshed = ModelSchema.parse(m);
+          Object.assign(previous, { protocols: refreshed.protocols, thinking: refreshed.thinking, reasoning: refreshed.reasoning, contextWindow: refreshed.contextWindow, tools: refreshed.tools, images: refreshed.images });
+        }
         if (previous && connection.auth === 'subscription' && connection.provider === 'minimax' && m.reasoning) previous.reasoning = ModelSchema.shape.reasoning.parse(m.reasoning);
-        if (!previous) existing.set(m.id, ModelSchema.parse({ id: m.id, name: m.name, upstreamId: m.id, protocols: m.protocols ?? defaultProtocols, ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}), ...(typeof m.tools === 'boolean' ? { tools: m.tools } : {}), ...(m.reasoning ? { reasoning: m.reasoning } : {}), images: m.images ?? false }));
+        if (!previous) existing.set(m.id, ModelSchema.parse({ id: m.id, name: m.name, upstreamId: m.id, protocols: m.protocols ?? defaultProtocols, ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}), ...(typeof m.tools === 'boolean' ? { tools: m.tools } : {}), ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...(m.thinking ? {thinking:m.thinking} : {}), images: m.images ?? false }));
       }
       latest.models = [...existing.values()];
     });
@@ -189,7 +202,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   function discover(id: string): Promise<any> {
     if (discoveryTasks.has(id)) return discoveryTasks.get(id)!;
     discoveries.set(id, { phase: 'loading' });
-    const task = Promise.resolve().then(() => fetchModels(id)).then(models => { discoveries.set(id, { ...discoveries.get(id), phase: 'ready', count: models.length }); return models; }, error => { discoveries.set(id, { phase: 'error', message: error instanceof Error ? error.message : '自动获取失败，可重试或手动填写模型 ID。' }); throw error; }).finally(() => { discoveryTasks.delete(id); if (rediscover.delete(id)) scheduleDiscovery(id); });
+    const task = Promise.resolve().then(() => fetchModels(id)).then(models => { connectionChecks.delete(id); discoveries.set(id, { ...discoveries.get(id), phase: 'ready', count: models.length }); return models; }, error => { discoveries.set(id, { phase: 'error', message: error instanceof Error ? error.message : '自动获取失败，可重试或手动填写模型 ID。' }); throw error; }).finally(() => { discoveryTasks.delete(id); if (rediscover.delete(id)) scheduleDiscovery(id); });
     discoveryTasks.set(id, task); return task;
   }
   function scheduleDiscovery(id: string) {
@@ -214,8 +227,18 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       } finally { changingListener = false; }
     },
     async importLocalAccount(id: string) { const connection = await localAccounts.importAccount(id); await saveConnection(connection); scheduleDiscovery(connection.id); await localAccounts.scan(); return connection.id; },
+    async setModelExposure(id: string, enabled: boolean) {
+      const config = await store.update(current => {
+        const entry = managedModels(current).find(m => m.id === id);
+        if (!entry) throw new Error('模型目录已变化，请刷新后重试。');
+        for (const member of entry.members) member.model.enabled = enabled;
+      });
+      await clients.updateCatalog(config);
+    },
     discoveryStates: () => Object.fromEntries(discoveries),
+    connectionStates: () => Object.fromEntries(connectionChecks),
     async startLogin(id: string) {
+      connectionChecks.delete(id);
       const connection = store.get().connections.find(c => c.id === id && ['chatgpt-device', 'subscription'].includes(c.auth));
       if (!connection) throw new Error('ChatGPT connection not found.');
       if (connection.loginMethod === 'browser' && [...logins].some(([other, value]) => other !== id && value.login.state.method === 'browser' && ['starting', 'waiting'].includes(value.login.state.phase))) throw new Error('请先完成或取消另一个账号的浏览器登录，再登录此账号。');

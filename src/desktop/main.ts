@@ -1,3 +1,4 @@
+import { managedModels } from '../core/catalog.js';
 import { catalogRoutes } from '../core/model-pool.js';
 import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage } from 'electron';
 import path from 'node:path';
@@ -48,9 +49,10 @@ else {
             const config = active.store.get(); const address = active.gateway.address;
             const [codex, claude] = await Promise.all(['codex', 'claude'].map(client => active.clients.status(client as 'codex' | 'claude', config, address)));
             const modelCatalog = catalogRoutes(config).map(entry => ({ id: entry.id, name: entry.model.name, provider: entry.connection.provider, tools: entry.model.tools, members: entry.members.map(r => ({ connectionId: r.connection.id, modelId: r.model.id, name: r.connection.name, model: r.model.upstreamId })) }));
-            return { config, address, modelCatalog, clientStatuses: { codex, claude }, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...usageView(records, filters, days), usageWriteFailed: active.usageWriteFailed() };
+            return { config, address, modelCatalog, managedModels: managedModels(config).map(entry => ({ id: entry.id, name: entry.model.name, provider: entry.connection.provider, enabled: entry.enabled, mixed: entry.mixed, exposedAccounts: entry.exposedAccounts, members: entry.members.map(m => ({connectionId:m.connection.id,modelId:m.model.id,name:m.connection.name,model:m.model.upstreamId})) })), clientStatuses: { codex, claude }, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), connectionChecks: active.connectionStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...usageView(records, filters, days), usageWriteFailed: active.usageWriteFailed() };
           }
           case 'connection.save': return active.saveConnection(payload.connection, payload.apiKey ? z.string().max(20000).parse(payload.apiKey) : undefined, payload.autoDiscover !== false);
+          case 'model.exposure': return active.setModelExposure(z.string().parse(payload.id), z.boolean().parse(payload.enabled));
           case 'connection.discover': return active.discover(z.string().parse(payload.id));
           case 'connection.delete': {
             const config = active.store.get(); const id = z.string().parse(payload.id);

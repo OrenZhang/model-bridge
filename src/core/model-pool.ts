@@ -6,11 +6,14 @@ export function routeFingerprint(route: ModelRoute) {
   const { connection: c, model: m } = route;
   return digest(JSON.stringify([c.id, c.provider, c.auth, c.accountId, c.accountEmail, c.secretRef, c.credentialVersion, c.baseUrl, m.upstreamId, m.protocols]));
 }
+export function modelGroupId(connection: Connection, model: Model) {
+  const key = JSON.stringify([connection.provider, connection.auth, connection.baseUrl.replace(/\/+$/, ''), model.upstreamId, [...model.protocols].sort(), model.tools, model.images, model.contextWindow, [...model.reasoning].sort(), ...(model.thinking ? [model.thinking] : [])]);
+  return `@pool/${digest(key).slice(0, 24)}`;
+}
 export function modelGroups(config: Config) {
   const groups = new Map<string, ModelRoute[]>();
   for (const connection of config.connections.filter(c => c.enabled)) for (const model of connection.models.filter(m => m.enabled)) {
-    const key = JSON.stringify([connection.provider, connection.auth, connection.baseUrl.replace(/\/+$/, ''), model.upstreamId, [...model.protocols].sort(), model.tools, model.images, model.contextWindow, [...model.reasoning].sort()]);
-    const id = `@pool/${digest(key).slice(0, 24)}`;
+    const id = modelGroupId(connection, model);
     const group = groups.get(id) ?? [];
     if (!group.some(r => (r.connection.accountId && r.connection.accountEmail ? JSON.stringify([r.connection.accountId, r.connection.accountEmail ?? '']) : r.connection.id) === (connection.accountId && connection.accountEmail ? JSON.stringify([connection.accountId, connection.accountEmail ?? '']) : connection.id))) group.push({ connection, model });
     groups.set(id, group);

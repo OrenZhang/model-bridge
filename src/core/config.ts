@@ -19,6 +19,7 @@ export const ModelSchema = z.object({
   contextWindow: z.number().int().min(4096).max(10000000).default(128000),
   tools: z.boolean().default(true), images: z.boolean().default(false),
   reasoning: z.array(z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])).default([]),
+  thinking: z.object({ mode: z.enum(['only', 'both', 'none']), efforts: z.array(z.string().min(1)).default([]), defaultEffort: z.string().optional() }).optional(),
   enabled: z.boolean().default(true),
   price: z.object({ input: z.number().nonnegative(), output: z.number().nonnegative(), cachedInput: z.number().nonnegative().optional(), currency: z.literal('USD').default('USD') }).optional(),
 });

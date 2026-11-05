@@ -15,7 +15,7 @@ ACP 是 Agent 会话协议，不等于模型认证协议。当前实现直接复
 
 凭据只保存在系统加密凭据库。界面状态不含 access/refresh/device token；移除连接清除本地保存的订阅令牌。授权轮询支持 pending、slow_down、拒绝、超时与取消；并发调用共享一次刷新。区域、账号和连接 ID 共同隔离凭据。已有对话继续遵循原账号绑定。
 
-Kimi 通过官方 `/models` 读取协议、工具支持、图片输入和上下文信息。MiniMax Code 订阅直接加载官方 first-run 目录，在界面标记“权限以套餐为准”；它的模型列表路径实测返回 503，不用于判断登录是否成功。MiniMax API Key 连接仍优先尝试 `/models`，仅官方地址返回 404/405 时回退预置目录，401/403 保留错误。内置模型 ID 不代表账号已获得调用权限。
+Kimi 通过官方 `/models` 读取协议、thinking 开关与等级、工具支持、图片输入和上下文信息。MiniMax Code 订阅直接加载官方 first-run 目录，在界面标记“权限以套餐为准”；它的模型列表路径实测返回 503，不用于判断登录是否成功。MiniMax API Key 连接仍优先尝试 `/models`，仅官方地址返回 404/405 时回退预置目录，401/403 保留错误。内置模型 ID 不代表账号已获得调用权限。
 
 ## MiniMax 订阅 thinking
 
@@ -39,12 +39,12 @@ Responses、Messages、Chat 的 thinking 历史继续使用原有认证绑定的
 - 模拟订阅凭据经过真实本地 HTTP 网关验证模型发现、区域地址、Bearer 注入和跨协议 Responses 输出；Kimi Messages 使用 beta 路径和 adaptive thinking。
 - 本机现有 ChatGPT 账号和 OpenAI API Key 连接分别通过真实 Codex 0.144.1 的 3 轮对话、3 次工具调用；原生加密推理和工具结果均继续回传。此结果与订阅通道测试分开记录。
 - MiniMax 订阅 M2.7、M3、M3.1-Flash 均已通过独立 Codex CLI 的三轮计算校验、工具调用和 thinking 续传，详情见 [订阅 thinking 实测](validation-minimax-plan-thinking.md)。
-- Kimi/MiniMax API Key 的真实跨协议多轮、thinking、工具调用结果见 [原验证记录](validation.md)。Kimi 订阅完整授权仍待账号本人验证；MiniMax 账号本人已完成授权，使用原有凭据恢复连接，MiniMax-M2.7 实际 Responses 调用已返回 HTTP 200、完整响应和预期文本。
+- Kimi/MiniMax API Key 的真实跨协议多轮、thinking、工具调用结果见 [原验证记录](validation.md)。Kimi 订阅本人授权、重启恢复和三组真实 Codex thinking 续传已通过，详情见 [Kimi 订阅实测](validation-kimi-subscription.md)；MiniMax 账号本人已完成授权，使用原有凭据恢复连接，MiniMax-M2.7 实际 Responses 调用已返回 HTTP 200、完整响应和预期文本。
 
 ## 官方协议依据
 
 独立实现线级协议，以下固定版本作为核对依据：
 
-- [Kimi OAuth 设备授权与刷新](https://github.com/MoonshotAI/kimi-code/blob/2a6d1cf570d15174d6d5add04eaa8d9d6d45348b/packages/oauth/src/oauth.ts)、[Kimi 模型目录和协议](https://github.com/MoonshotAI/kimi-code/blob/2a6d1cf570d15174d6d5add04eaa8d9d6d45348b/packages/oauth/src/managed-kimi-code.ts)。
+- [Kimi OAuth 设备授权与刷新](https://github.com/MoonshotAI/kimi-code/blob/2b8afafea4238aeb553ab946cf0a1c641f8712ca/packages/oauth/src/oauth.ts)、[Kimi 模型目录和协议](https://github.com/MoonshotAI/kimi-code/blob/2b8afafea4238aeb553ab946cf0a1c641f8712ca/packages/oauth/src/managed-kimi-code.ts)。
 - [MiniMax OAuth PKCE 与两种设备响应](https://github.com/MiniMax-AI/minimax-code/blob/3c21163c85a9684030cb147bfef48c6284fa3c46/packages/oauth-core/src/oauth-client.ts)、[OAuth audience 与 scope](https://github.com/MiniMax-AI/minimax-code/blob/3c21163c85a9684030cb147bfef48c6284fa3c46/packages/oauth-core/src/contracts.ts)。
 - [MiniMax 官方区域模型地址](https://github.com/MiniMax-AI/minimax-code/blob/3c21163c85a9684030cb147bfef48c6284fa3c46/packages/config/src/config.ts)、[官方 first-run 目录](https://github.com/MiniMax-AI/minimax-code/blob/3c21163c85a9684030cb147bfef48c6284fa3c46/packages/config/src/minimax-model-catalog.ts)。
