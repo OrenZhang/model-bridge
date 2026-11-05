@@ -14,7 +14,7 @@
 - DeepSeek：增加 API Key 服务预设。当前已识别的 deepseek-flash、deepseek-v4-pro 提供关闭与 low/high/max；不同入口统一转成配置的 Chat 上游 thinking / reasoning_effort。
 - 自定义服务按已配置的模型能力提供选项；未声明能力的模型保持原有行为。
 
-三种入口的参数覆盖已由真实本地 HTTP 网关与模拟上游检查，覆盖 GPT、Kimi、MiniMax、DeepSeek。当前没有已授权的 DeepSeek 连接，DeepSeek 不宣称真实服务实测。原有 Kimi/MiniMax 10 个模型的真实矩阵见 [局域网验证](validation-lan-model-matrix.md)。
+三种入口的参数覆盖已由真实本地 HTTP 网关与模拟上游检查，覆盖 GPT、Kimi、MiniMax、DeepSeek。另对现有已授权的 GPT low、Kimi high、MiniMax M3.1 low / M3 关闭 / M2.7 原生开启，经三种入口完成 15 次真实 HTTP 200，并观测到预期上游参数；使用临时网关转交原有授权网关，服务商凭据未导出，已有连接设置未改写，见 [模式验证元数据](validation-connection-modes.json)。当前没有已授权的 DeepSeek 连接，DeepSeek 不宣称真实服务实测。原有 Kimi/MiniMax 10 个模型的真实矩阵见 [局域网验证](validation-lan-model-matrix.md)。
 
 官方参考：[OpenAI 推理等级](https://developers.openai.com/api/docs/guides/reasoning)、[Kimi 模型能力声明](https://github.com/MoonshotAI/kimi-code/blob/2b8afafea4238aeb553ab946cf0a1c641f8712ca/packages/oauth/src/managed-kimi-code.ts)、[MiniMax 开放平台 thinking](https://platform.minimax.io/docs/api-reference/text-anthropic-api)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)。MiniMax 订阅通道继续遵循单独的官方 managed payload 规则。
 
@@ -33,3 +33,5 @@
 Kimi 官方身份协议要求调用方声明自己的应用身份。本项目使用 `User-Agent: CoSail/0.1.0`、`X-Msh-Platform: cosail`、`X-Msh-Device-Name: CoSail`，并附带操作系统、架构和持久化的随机设备 ID。授权、刷新、个人资料、模型目录与订阅调用保持同一设备身份。不会借用 Kimi Code CLI 的平台标识。
 
 依据：[官方身份字段实现](https://github.com/MoonshotAI/kimi-code/blob/2b8afafea4238aeb553ab946cf0a1c641f8712ca/packages/oauth/src/identity.ts)。已有服务商设备记录无法由本网关改名，最终展示由服务商决定；新标识随后续授权发送，旧“未知设备”记录可能需要重新授权后才更新。
+
+2026-11-05：携带 CoSail 身份和持久化设备 ID 的真实 Kimi 设备授权启动请求返回 HTTP 200，并签发设备授权码。此探测未完成用户授权、未改写已有订阅凭据，授权码没有写入报告；不据此宣称已观察到服务商设备列表完成改名。

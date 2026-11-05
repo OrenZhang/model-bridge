@@ -27,3 +27,5 @@ CI 在 Linux x64 / ARM64 上运行类型检查、完整测试、真实 Codex 与
 无桌面或无系统凭据库的环境可使用现有 CLI，通过 MODEL_BRIDGE_DATA_DIR 指定配置目录、MODEL_BRIDGE_GATEWAY_KEY 设置网关 Key；服务商 API Key 用 env:变量名引用。CLI 与桌面端应使用不同数据目录。
 
 格式依据：[electron-builder Linux/AppImage](https://www.electron.build/v26/docs/appimage/)。凭据存储依据：[Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)。具体构建与原生启动是否通过，以对应提交的 Checks 结果为准；不等同于所有 Linux 发行版的人工桌面验收。
+
+2026-11-05：实现提交 `7b8d963` 的四平台 CI 全部通过；Linux x64 / ARM64 均通过上述原生桌面启动与加密凭据库验证，并生成 AppImage / Deb。下载见 [Checks 安装包](https://github.com/OrenZhang/model-bridge/actions/runs/42013693454)。

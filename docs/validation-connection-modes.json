@@ -1,0 +1,188 @@
+{
+  "createdAt": "2026-11-05T10:52:17.270Z",
+  "realUpstream": true,
+  "method": "Temporary gateway with configured mode overrides forwards native payloads to existing authorized local gateway; provider credentials remain in vault.",
+  "connectionSettingsUnchanged": true,
+  "results": [
+    {
+      "model": "kimi-for-coding",
+      "mode": "high",
+      "ingressProtocol": "responses",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "kimi-for-coding",
+        "thinking": "enabled",
+        "thinkingEffort": "high",
+        "upstreamProtocol": "chat"
+      }
+    },
+    {
+      "model": "kimi-for-coding",
+      "mode": "high",
+      "ingressProtocol": "chat",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "kimi-for-coding",
+        "thinking": "enabled",
+        "thinkingEffort": "high",
+        "upstreamProtocol": "chat"
+      }
+    },
+    {
+      "model": "kimi-for-coding",
+      "mode": "high",
+      "ingressProtocol": "messages",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "kimi-for-coding",
+        "thinking": "enabled",
+        "thinkingEffort": "high",
+        "upstreamProtocol": "chat"
+      }
+    },
+    {
+      "model": "MiniMax-M3.1-Flash",
+      "mode": "low",
+      "ingressProtocol": "responses",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "MiniMax-M3.1-Flash",
+        "reasoningEffort": "low",
+        "upstreamProtocol": "messages"
+      }
+    },
+    {
+      "model": "MiniMax-M3.1-Flash",
+      "mode": "low",
+      "ingressProtocol": "chat",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "MiniMax-M3.1-Flash",
+        "reasoningEffort": "low",
+        "upstreamProtocol": "messages"
+      }
+    },
+    {
+      "model": "MiniMax-M3.1-Flash",
+      "mode": "low",
+      "ingressProtocol": "messages",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "MiniMax-M3.1-Flash",
+        "reasoningEffort": "low",
+        "upstreamProtocol": "messages"
+      }
+    },
+    {
+      "model": "MiniMax-M3",
+      "mode": "none",
+      "ingressProtocol": "responses",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "MiniMax-M3",
+        "thinking": "disabled",
+        "upstreamProtocol": "messages"
+      }
+    },
+    {
+      "model": "MiniMax-M3",
+      "mode": "none",
+      "ingressProtocol": "chat",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "MiniMax-M3",
+        "thinking": "disabled",
+        "upstreamProtocol": "messages"
+      }
+    },
+    {
+      "model": "MiniMax-M3",
+      "mode": "none",
+      "ingressProtocol": "messages",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "MiniMax-M3",
+        "thinking": "disabled",
+        "upstreamProtocol": "messages"
+      }
+    },
+    {
+      "model": "MiniMax-M2.7",
+      "mode": "on",
+      "ingressProtocol": "responses",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "MiniMax-M2.7",
+        "upstreamProtocol": "messages"
+      }
+    },
+    {
+      "model": "MiniMax-M2.7",
+      "mode": "on",
+      "ingressProtocol": "chat",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "MiniMax-M2.7",
+        "upstreamProtocol": "messages"
+      }
+    },
+    {
+      "model": "MiniMax-M2.7",
+      "mode": "on",
+      "ingressProtocol": "messages",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "MiniMax-M2.7",
+        "upstreamProtocol": "messages"
+      }
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "mode": "low",
+      "ingressProtocol": "responses",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "low",
+        "upstreamProtocol": "responses"
+      }
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "mode": "low",
+      "ingressProtocol": "chat",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "low",
+        "upstreamProtocol": "responses"
+      }
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "mode": "low",
+      "ingressProtocol": "messages",
+      "status": 200,
+      "passed": true,
+      "outbound": {
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "low",
+        "upstreamProtocol": "responses"
+      }
+    }
+  ]
+}
