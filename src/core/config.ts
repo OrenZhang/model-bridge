@@ -26,12 +26,13 @@ export type Model = z.infer<typeof ModelSchema>;
 export const ConnectionSchema = z.object({
   id: identifier, name: z.string().min(1).max(100),
   provider: z.enum(['openai', 'kimi', 'minimax', 'anthropic', 'custom']),
-  auth: z.enum(['api-key', 'chatgpt-device', 'none']).default('api-key'),
+  auth: z.enum(['api-key', 'chatgpt-device', 'subscription', 'none']).default('api-key'),
   baseUrl: z.string().url().refine(value => {
     const u = new URL(value);
     return !u.username && !u.password && !u.search && !u.hash &&
       (u.protocol === 'https:' || (u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)));
   }, 'Use HTTPS, or HTTP on loopback; do not include credentials, query parameters or fragments.'),
+  region: z.enum(['cn', 'global']).default('cn'),
   loginMethod: z.enum(['device', 'browser']).default('device'),
   accountId: z.string().min(1).optional(),
   accountEmail: z.string().optional(),
@@ -42,6 +43,10 @@ export const ConnectionSchema = z.object({
 }).superRefine((connection, ctx) => {
   if (connection.auth === 'chatgpt-device' && connection.provider !== 'openai')
     ctx.addIssue({ code: 'custom', message: 'ChatGPT device login requires the OpenAI provider.' });
+  if (connection.auth === 'subscription') {
+    const expected = connection.provider === 'kimi' ? (connection.region === 'cn' ? 'https://api.kimi.com/coding/v1' : 'https://api.kimi.ai/coding/v1') : connection.provider === 'minimax' ? (connection.region === 'cn' ? 'https://agent.minimax.cn/mavis/api/v1/llm/v1' : 'https://agent.minimax.io/mavis/api/v1/llm/v1') : undefined;
+    if (!expected || connection.baseUrl.replace(/\/+$/, '') !== expected) ctx.addIssue({ code: 'custom', message: 'Subscription login requires the official provider and regional coding endpoint.' });
+  }
   const ids = connection.models.map(m => m.id);
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: 'custom', message: 'Model IDs must be unique within a connection.' });
 });

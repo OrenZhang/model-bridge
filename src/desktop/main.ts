@@ -55,7 +55,7 @@ else {
           case 'connection.delete': {
             const config = active.store.get(); const id = z.string().parse(payload.id);
             const existing = config.connections.find(c => c.id === id);
-            if (existing?.auth === 'chatgpt-device') await active.loginFor(id).logout();
+            if (existing && ['chatgpt-device', 'subscription'].includes(existing.auth)) await active.loginFor(id).logout();
             const updated = await active.store.update(current => { current.connections = current.connections.filter(c => c.id !== id); }); await active.clients.updateCatalog(updated); return true;
           }
           case 'device.login': {

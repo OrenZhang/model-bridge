@@ -33,6 +33,7 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 | --- | --- |
 | Windows / macOS 桌面界面 | Electron 实现，macOS 已启动检查；跨平台 CI 验证编译和测试，Windows 实机交互待验收 |
 | ChatGPT 登录 | 官方浏览器授权 / 设备码两种方式，复用随包官方 Codex helper；多账号独立目录，支持取消与刷新。两种真实授权启动及取消已验证，完整浏览器授权由账号本人完成 |
+| Kimi / MiniMax 订阅登录 | 官方设备授权、区域选择、独立账号与令牌刷新；授权启动已实测，完整套餐调用需要本人完成授权。MiniMax Code Token Plan 与开放平台 Coding Plan API Key 分开接入 |
 | Kimi / MiniMax / Anthropic / 自定义服务 | API Key 与模型发现/手工配置；Kimi Coding Chat、MiniMax M2.7 Messages 已通过真实 Codex 跨协议多轮与工具调用 |
 | Responses / Messages / Chat Completions | 同协议透传，跨协议文本、JSON 工具调用和 thinking 历史转换；流式与 JSON 回退、取消、错误处理 |
 | 跨协议 thinking | 保留 Chat reasoning、Messages thinking/signature/redacted thinking、Responses 加密推理项；同一客户端与模型路由可在工具调用后完整回传 |
@@ -65,8 +66,8 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 - thinking 历史使用网关加密封装，绑定客户端与上游模型路由。客户端需要保留并回传这些条目；不能把原模型的签名或加密状态迁移给另一个服务商。切换模型或账号后请新建对话。真实服务及模拟上游的独立结果见 [验证说明](docs/validation.md)。
 - 跨协议暂不支持 `previous_response_id`、托管会话、结构化输出、音视频、服务端工具、强制指定工具等高级能力。图片只支持已声明的常见图片块。原生协议优先保留服务商字段，但仍受服务商兼容范围限制。
 - 统一模式生成的 Codex 配置关闭内置服务端 Web Search，避免客户端默认发送上游无法处理的工具；普通本地工具调用不受影响，切回原始模式恢复原设置。
-- ChatGPT 设备授权使用 Codex 的登录能力与账号凭据，**不等于 OpenAI Platform API Key**。当前 ChatGPT 请求通道属于需单独验证的适配器，不能承诺所有订阅、组织策略或未来版本均兼容。
-- Kimi / MiniMax 暂不提供各自的订阅 OAuth 登录。套餐剩余额度/官方账单未接入，本地统计只覆盖经过本网关的请求。
+- ChatGPT 设备授权使用 Codex 的登录能力与账号凭据，**不等于 OpenAI Platform API Key**。当前本机 ChatGPT 账号与 OpenAI API Key 通道均已用真实 Codex 验证多轮和工具调用，不能承诺所有订阅、组织策略或未来版本均兼容。
+- Kimi Code / MiniMax Code 订阅 OAuth 已接入；不把 ACP 当成模型 HTTP 接口。当前没有内嵌 ACP Agent 会话，统一调用走官方订阅的模型通道。套餐剩余额度/官方账单未接入，本地统计只覆盖经过本网关的请求。认证边界和实测范围见 [订阅认证说明](docs/provider-auth.md)。
 - 未返回的用量记为未知，不从文本猜测 Token 数；费用为配置价格下的估算，不是订阅账单。线上协议必填用量字段可能使用零占位，本机统计保留未知状态。
 - 未提供签名/公证的正式安装包。当前推荐开发者从源码运行；不要把 CI 构建成功当作 Windows 实机验收。
 - 本机账号复用只读取已知 Codex 登录格式；新版 secrets keyring 格式可能需要设备码重新授权。复制登录后与原客户端共用同一授权来源，令牌轮换后可能需要重新登录。

@@ -66,7 +66,7 @@ export class LocalCodexAccounts {
     const loaded = await this.load(source); const info = this.identify(source, loaded);
     if (!info.canImport) throw new Error(info.message);
     const existing = this.config().connections.find(c => c.id === info.connectionId); if (existing) return existing;
-    const connection: Connection = { id: info.connectionId!, name: info.email ? `Codex · ${info.email}` : '本机 Codex 账号', provider: 'openai', auth: info.kind === 'chatgpt' ? 'chatgpt-device' : 'api-key', baseUrl: info.kind === 'chatgpt' ? 'https://chatgpt.com/backend-api/codex' : 'https://api.openai.com/v1', loginMethod: 'browser', ...(info.kind === 'chatgpt' ? { accountId: loaded.auth.tokens.account_id, ...(info.email ? { accountEmail: info.email } : {}) } : {}), proxy: { mode: 'inherit' }, enabled: true, models: [] };
+    const connection: Connection = { id: info.connectionId!, name: info.email ? `Codex · ${info.email}` : '本机 Codex 账号', provider: 'openai', auth: info.kind === 'chatgpt' ? 'chatgpt-device' : 'api-key', baseUrl: info.kind === 'chatgpt' ? 'https://chatgpt.com/backend-api/codex' : 'https://api.openai.com/v1', loginMethod: 'browser', region: 'cn', ...(info.kind === 'chatgpt' ? { accountId: loaded.auth.tokens.account_id, ...(info.email ? { accountEmail: info.email } : {}) } : {}), proxy: { mode: 'inherit' }, enabled: true, models: [] };
     if (info.kind === 'chatgpt') {
       const auth = { auth_mode: 'chatgpt', OPENAI_API_KEY: null, tokens: loaded.auth.tokens, last_refresh: loaded.auth.last_refresh };
       await atomicWrite(path.join(this.data, 'accounts', connection.id, 'codex', 'auth.json'), JSON.stringify(auth));

@@ -36,6 +36,7 @@ async function write(res: ServerResponse, value: string | Uint8Array) {
 }
 export interface GatewayOptions {
   config: () => Config; secrets: SecretStore; network: Network; usage: UsageStore;
+  subscriptionCredentials?: (connection: Connection) => Promise<{ token: string }>;
   chatgptCredentials?: (connection: Connection) => Promise<{ token: string; accountId: string; email?: string }>;
   onUsageError?: () => void;
   reasoningVault?: ReasoningVault;
@@ -107,6 +108,15 @@ export async function startGateway(options: GatewayOptions) {
         headers.originator = 'model_bridge';
         payload = { ...payload, stream: true, store: false, instructions: payload.instructions ?? '' };
         if (typeof payload.input === 'string') payload.input = [{ role: 'user', content: [{ type: 'input_text', text: payload.input }] }];
+      } else if (connection.auth === 'subscription') {
+        if (!options.subscriptionCredentials) throw new BridgeError(503, 'subscription_unavailable', 'Subscription login is unavailable.');
+        const credentials = await options.subscriptionCredentials(connection);
+        headers.authorization = `Bearer ${credentials.token}`;
+        headers['user-agent'] = 'ModelBridge/0.1.0';
+        if (connection.provider === 'kimi' && upstream === 'messages') {
+          endpoint += '?beta=true';
+          if (payload.thinking?.type === 'enabled') payload.thinking = { type: 'adaptive' };
+        }
       } else if (connection.auth === 'api-key') {
         const key = connection.secretRef ? await options.secrets.get(connection.secretRef) : undefined;
         if (!key) throw new BridgeError(401, 'credentials_missing', 'Add an API key for the selected connection.');
