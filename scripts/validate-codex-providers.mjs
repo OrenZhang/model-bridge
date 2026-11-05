@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { catalogRoutes } from '../dist/core/model-pool.js';
+import { publicModelRoutes } from '../dist/core/model-pool.js';
 /** Real Codex 0.144.1 app-server integration, with isolated credentials and fixtures.
  * Run after npm run build using Node >=22.19:
  *   node scripts/validate-codex-providers.mjs --mock
@@ -118,7 +118,7 @@ async function createMockGateway() {
   const usage = new UsageStore(path.join(root, 'usage'));
   const gateway = await startGateway({ config: () => config, secrets, network, usage });
   cleanup.push(() => network.close()); cleanup.push(() => gateway.close());
-  routeMetadata = Object.fromEntries(catalogRoutes(config).map(({ id, model }) => [id, { upstreamHost: '127.0.0.1', upstreamModel: model.upstreamId, upstreamProtocol: model.protocols[0] }]));
+  routeMetadata = Object.fromEntries(publicModelRoutes(config).map(({ id, model }) => [id, { upstreamHost: '127.0.0.1', upstreamModel: model.upstreamId, upstreamProtocol: model.protocols[0] }]));
   return { url: gateway.address, key, replayChecks: upstream.replayChecks, usage };
 }
 
