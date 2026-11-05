@@ -1,7 +1,8 @@
 import { PoolRouter } from './pool-router.js';
 import { kimiSubscriptionThinking } from '../auth/kimi-models.js';
+import { chatgptPayload } from '../auth/chatgpt-payload.js';
 import { minimaxSubscriptionThinking } from '../auth/minimax-thinking.js';
-import { poolCandidates, reasoningScope } from '../core/model-pool.js';
+import { modelGroupId, poolCandidates, reasoningScope } from '../core/model-pool.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -86,7 +87,7 @@ export async function startGateway(options: GatewayOptions) {
       selected = input.model;
       const candidates = poolCandidates(options.config(), selected);
       const session = req.headers['x-model-bridge-session'] ?? req.headers['session_id'] ?? input.metadata?.user_id;
-      route = candidates?.length ? await poolRouter.select(selected, candidates, input, clientId, protocol, reasoningVault, typeof session === 'string' ? session : undefined) : resolveRoute(options.config(), selected);
+      route = candidates?.length ? await poolRouter.select(modelGroupId(candidates[0]!.connection,candidates[0]!.model), candidates, input, clientId, protocol, reasoningVault, typeof session === 'string' ? session : undefined) : resolveRoute(options.config(), selected);
       const { connection, model } = route;
       if (input.tools?.length && !model.tools) throw new BridgeError(400, 'tools_unsupported', 'This model does not support tool calls.');
       const upstream = model.protocols.includes(protocol) ? protocol : model.protocols[0]!;
@@ -109,8 +110,7 @@ export async function startGateway(options: GatewayOptions) {
         if (upstream !== 'responses') throw new BridgeError(400, 'invalid_chatgpt_protocol', 'ChatGPT device connections must use Responses upstream.');
         headers.authorization = `Bearer ${credentials.token}`; headers['ChatGPT-Account-ID'] = credentials.accountId;
         headers.originator = 'model_bridge';
-        payload = { ...payload, stream: true, store: false, instructions: payload.instructions ?? '' };
-        if (typeof payload.input === 'string') payload.input = [{ role: 'user', content: [{ type: 'input_text', text: payload.input }] }];
+        payload = chatgptPayload(payload);
       } else if (connection.auth === 'subscription') {
         if (connection.provider === 'kimi') kimiSubscriptionThinking(payload, upstream, model, canonical ?? { effort: input.reasoning?.effort ?? input.reasoning_effort ?? input.output_config?.effort, thinking: input.thinking });
         if (connection.provider === 'minimax' && upstream === 'messages') minimaxSubscriptionThinking(payload, model.upstreamId, canonical ?? { effort: input.output_config?.effort, thinking: input.thinking });

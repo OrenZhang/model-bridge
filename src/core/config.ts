@@ -1,4 +1,4 @@
-import { poolCandidates } from './model-pool.js';
+import { poolCandidates, publicModelRoutes } from './model-pool.js';
 import { z } from 'zod';
 
 export const ProtocolSchema = z.enum(['responses', 'messages', 'chat']);
@@ -83,6 +83,8 @@ export function resolveRoute(config: Config, id: string) {
     const model = connection.models.find(m => m.enabled && routeId(connection, m) === id);
     if (model) return { connection: structuredClone(connection), model: structuredClone(model) };
   }
+  const named = publicModelRoutes(config).find(route => route.id === id);
+  if (named) return {connection:structuredClone(named.connection),model:structuredClone(named.model)};
   throw new BridgeError(404, 'model_not_found', 'Model is unavailable. Refresh the model list and select an enabled model.');
 }
 export class BridgeError extends Error {

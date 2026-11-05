@@ -1,9 +1,9 @@
-import { catalogRoutes, modelGroupId } from './model-pool.js';
+import { catalogRoutes, modelGroupId, publicModelRoutes } from './model-pool.js';
 import { type Config } from './config.js';
 
 const instructions = 'You are a coding assistant. Follow the user and developer instructions. Inspect relevant files before changing them. Use the provided tools and report results accurately.';
 export function models(config: Config) {
-  return catalogRoutes(config);
+  return publicModelRoutes(config);
 }
 export function managedModels(config: Config) {
   const all = structuredClone(config);

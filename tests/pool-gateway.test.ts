@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { ConfigSchema } from '../src/core/config.js';
-import { catalogRoutes } from '../src/core/model-pool.js';
+import { catalogRoutes, publicModelRoutes } from '../src/core/model-pool.js';
 import { startGateway, tokenHash } from '../src/gateway/server.js';
 import { UsageStore } from '../src/core/usage.js';
 import type { Network } from '../src/core/network.js';
@@ -20,11 +20,11 @@ it('routes real HTTP tool continuations to the same account and records actual p
     return new Response(JSON.stringify({id:'fixture',choices:[{message:{role:'assistant',content:toolOutput?'done':null,reasoning_content:'original-thinking-'+connection.id,...(!toolOutput?{tool_calls:[{id:'call_probe',type:'function',function:{name:'probe',arguments:'{}'}}]}:{})},finish_reason:toolOutput?'stop':'tool_calls'}],usage:{prompt_tokens:10,completion_tokens:5}}),{headers:{'content-type':'application/json'}});
   },close:async()=>{}} as unknown as Network;
   const usage=new UsageStore(directory);const gateway=await startGateway({config:()=>config,secrets:{get:async()=>undefined},network,usage});cleanups.push(()=>gateway.close());
-  const model=catalogRoutes(config)[0]!.id;
-  const post=async(session:string,input:any)=>{const r=await fetch(gateway.address+'/v1/responses',{method:'POST',headers:{authorization:'Bearer fixture-key','content-type':'application/json','x-model-bridge-session':session},body:JSON.stringify({model,input,stream:false,tools:[{type:'function',name:'probe',parameters:{type:'object',properties:{}}}]})});expect(r.status).toBe(200);return r.json() as Promise<any>};
+  const model=publicModelRoutes(config)[0]!.id;const legacy=catalogRoutes(config)[0]!.id;
+  const post=async(session:string,input:any,selected=model)=>{const r=await fetch(gateway.address+'/v1/responses',{method:'POST',headers:{authorization:'Bearer fixture-key','content-type':'application/json','x-model-bridge-session':session},body:JSON.stringify({model:selected,input,stream:false,tools:[{type:'function',name:'probe',parameters:{type:'object',properties:{}}}]})});expect(r.status).toBe(200);return r.json() as Promise<any>};
   const first=await post('chat-one','first');await post('chat-two','first');
-  await post('chat-one',[{role:'user',content:'first'},...first.output,{type:'function_call_output',call_id:'call_probe',output:'tool result'}]);
+  await post('chat-one',[{role:'user',content:'first'},...first.output,{type:'function_call_output',call_id:'call_probe',output:'tool result'}],legacy);
   expect(calls.map(c=>c.account)).toEqual(['a','b','a']);
   const records=await usage.list();expect(records.map(r=>r.connectionId).sort()).toEqual(['a','a','b']);
-  expect(records.every(r=>r.model===model&&r.tokens.input===10)).toBe(true);
+  expect(records.every(r=>[model,legacy].includes(r.model)&&r.tokens.input===10)).toBe(true);
 });

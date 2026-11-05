@@ -19,10 +19,10 @@ it('defaults to exposed, keeps hidden models editable, and excludes them from ev
   expect(entry.enabled).toBe(true);expect(entry.exposedAccounts).toBe(2);
   await runtime.setModelExposure(entry.id,false);
   const admin=managedModels(runtime.store.get()).find(m=>m.id===entry.id)!;expect(admin.enabled).toBe(false);expect(admin.members).toHaveLength(2);
-  const openai:any=await(await fetch(runtime.gateway.address+'/v1/models',{headers})).json();expect(openai.data.map((m:any)=>m.id)).toEqual(['a/other']);
-  const anthropic:any=await(await fetch(runtime.gateway.address+'/v1/models',{headers:{...headers,'anthropic-version':'2023-06-01'}})).json();expect(anthropic.data.map((m:any)=>m.id)).toEqual(['a/other']);
-  const codex:any=await(await fetch(runtime.gateway.address+'/codex/models',{headers})).json();expect(codex.models.map((m:any)=>m.slug)).toEqual(['a/other']);
-  const portable=runtime.clients.portable('codex',runtime.store.get(),runtime.gateway.address,token);expect(JSON.parse(portable.catalog!).models.map((m:any)=>m.slug)).toEqual(['a/other']);
+  const openai:any=await(await fetch(runtime.gateway.address+'/v1/models',{headers})).json();expect(openai.data.map((m:any)=>m.id)).toEqual(['other']);
+  const anthropic:any=await(await fetch(runtime.gateway.address+'/v1/models',{headers:{...headers,'anthropic-version':'2023-06-01'}})).json();expect(anthropic.data.map((m:any)=>m.id)).toEqual(['other']);
+  const codex:any=await(await fetch(runtime.gateway.address+'/codex/models',{headers})).json();expect(codex.models.map((m:any)=>m.slug)).toEqual(['other']);
+  const portable=runtime.clients.portable('codex',runtime.store.get(),runtime.gateway.address,token);expect(JSON.parse(portable.catalog!).models.map((m:any)=>m.slug)).toEqual(['other']);
   for(const route of[entry.id,'a/shared','b/shared']){const r=await fetch(runtime.gateway.address+'/v1/responses',{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({model:route,input:'test'})});expect(r.status).toBe(404);}
   await runtime.setModelExposure(entry.id,true);expect(managedModels(runtime.store.get()).find(m=>m.id===entry.id)!.exposedAccounts).toBe(2);
   await runtime.store.update(c=>{c.connections[1]!.models[0]!.enabled=false;});expect(managedModels(runtime.store.get()).find(m=>m.id===entry.id)!.mixed).toBe(true);

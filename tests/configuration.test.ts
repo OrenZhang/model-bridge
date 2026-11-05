@@ -5,6 +5,7 @@ import os from 'node:os';
 import { parse, stringify } from 'smol-toml';
 import { ClientConfiguration, resolveClientAddress } from '../src/clients/configure.js';
 import { ConfigSchema } from '../src/core/config.js';
+import { models } from '../src/core/catalog.js';
 import { unknownTokens, usageTokens, estimatedCost, usageCsv } from '../src/core/usage.js';
 const dirs: string[] = [];
 afterEach(async () => { for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true }); });
@@ -27,7 +28,7 @@ describe('client configuration', () => {
       expect(exported.web_search).toBe('disabled');
       expect(exported.model_providers.model_bridge).toMatchObject({ base_url: 'http://192.168.31.21:18765/v1', requires_openai_auth: false });
       expect(Object.keys(portable.files)).toEqual(['config.toml', 'codex-models.json', 'README.txt', 'install-macos.sh', 'install-windows.ps1']);
-      expect(JSON.parse(portable.catalog!).models.map((model: any) => model.slug)).toEqual(['kimi/coding', 'minimax/coding']);
+      expect(JSON.parse(portable.catalog!).models.map((model: any) => model.slug)).toEqual(models(settings).filter(m=>m.model.tools).map(m=>m.id));
     } else {
       expect(exported.env).toMatchObject({ ANTHROPIC_BASE_URL: 'http://192.168.31.21:18765', ANTHROPIC_AUTH_TOKEN: 'exported-gateway-key' });
       expect(portable.catalog).toBeUndefined(); expect(Object.keys(portable.files)).toEqual(['settings.json', 'README.txt', 'install-macos.sh', 'install-windows.ps1']);
@@ -60,7 +61,7 @@ describe('client configuration', () => {
       expect(installed.model_providers.model_bridge).toMatchObject({ base_url: address + '/v1', requires_openai_auth: false, experimental_bearer_token: 'gateway-key' });
       expect(installed.mcp_servers.test.command).toBe('original-tool');
       const catalog = JSON.parse(await readFile(installed.model_catalog_json, 'utf8'));
-      expect(catalog.models.map((entry: any) => entry.slug)).toEqual(['kimi/coding', 'minimax/coding', 'openai/coding']);
+      expect(catalog.models.map((entry: any) => entry.slug)).toEqual(models(settings).filter(m=>m.model.tools).map(m=>m.id));
       expect(await readFile(authFile, 'utf8')).toBe(originalAuth);
       await clients.restore('codex');
       expect(await readFile(file, 'utf8')).toBe(original); expect(await readFile(authFile, 'utf8')).toBe(originalAuth);
@@ -70,10 +71,10 @@ describe('client configuration', () => {
     const { dir, clients } = await setup(); const settings = config(); const address = 'http://127.0.0.1:18765';
     settings.connections.push({ ...settings.connections[0]!, id: 'minimax', name: 'MiniMax', provider: 'minimax' });
     await clients.switchService('codex', () => settings, address, 'gateway-key', 'minimax/coding');
-    expect(await clients.enableGateway('codex', () => settings, address, 'gateway-key')).toMatchObject({ model: 'minimax/coding' });
-    expect(JSON.parse(await readFile(path.join(dir, 'data/codex-models.json'), 'utf8')).models.map((entry: any) => entry.slug)).toEqual(['kimi/coding', 'minimax/coding']);
+    expect(await clients.enableGateway('codex', () => settings, address, 'gateway-key')).toMatchObject({ model: models(settings).find(m=>m.connection.id==='minimax')!.id });
+    expect(JSON.parse(await readFile(path.join(dir, 'data/codex-models.json'), 'utf8')).models.map((entry: any) => entry.slug)).toEqual(models(settings).filter(m=>m.model.tools).map(m=>m.id));
     settings.connections[1]!.enabled = false;
-    expect(await clients.enableGateway('codex', () => settings, address, 'gateway-key')).toMatchObject({ model: 'kimi/coding' });
+    expect(await clients.enableGateway('codex', () => settings, address, 'gateway-key')).toMatchObject({ model: models(settings).find(m=>m.connection.id==='kimi')!.id });
   });
   it('refuses unified mode with no available agent model before changing client settings', async () => {
     const { dir, clients } = await setup(); const file = path.join(dir, '.codex/config.toml'); await mkdir(path.dirname(file));
@@ -170,8 +171,8 @@ describe('client configuration', () => {
     settings.connections.push({ ...settings.connections[0]!, id: 'minimax', name: 'MiniMax', provider: 'minimax' });
     const first = clients.switchService(client, () => settings, 'http://127.0.0.1:18765', 'gateway-key', 'kimi/coding');
     const second = clients.switchService(client, () => settings, 'http://127.0.0.1:18765', 'gateway-key', 'minimax/coding');
-    expect(await first).toMatchObject({ mode: 'bridge', serviceName: 'Kimi', connectionId: 'kimi', model: 'kimi/coding', canRestore: true });
-    expect(await second).toMatchObject({ mode: 'bridge', serviceName: 'MiniMax', connectionId: 'minimax', model: 'minimax/coding', canRestore: true });
+    expect(await first).toMatchObject({ mode: 'bridge', serviceName: 'Kimi', connectionId: 'kimi', model: models(settings).find(m=>m.connection.id==='kimi')!.id, canRestore: true });
+    expect(await second).toMatchObject({ mode: 'bridge', serviceName: 'MiniMax', connectionId: 'minimax', model: models(settings).find(m=>m.connection.id==='minimax')!.id, canRestore: true });
     const status = await clients.status(client, settings, 'http://127.0.0.1:18765');
     expect(JSON.stringify(status)).not.toContain('gateway-key'); expect(JSON.stringify(status)).not.toContain('private-value');
     settings.connections[1]!.enabled = false;
@@ -205,7 +206,7 @@ describe('client configuration', () => {
     const plan = await clients.plan('codex', config(), 'http://127.0.0.1:18765', 'local-secret');
     expect(plan.preview).not.toContain('local-secret');
     await clients.apply(plan.id, config());
-    const after: any = parse(await readFile(file, 'utf8')); expect(after.mcp_servers.test.command).toBe('sample'); expect(after.model).toBe('kimi/coding');
+    const after: any = parse(await readFile(file, 'utf8')); expect(after.mcp_servers.test.command).toBe('sample'); expect(after.model).toBe('coding');
     expect(after.model_providers.model_bridge.requires_openai_auth).toBe(false);
     await clients.restore('codex'); expect(await readFile(file, 'utf8')).toBe(original);
   });
@@ -241,7 +242,7 @@ describe('client configuration', () => {
     const first = await clients.plan('codex', initial, 'http://127.0.0.1:18765', 'key'); await clients.apply(first.id, initial);
     initial.connections[0]!.models.push({ ...initial.connections[0]!.models[0]!, id: 'second', upstreamId: 'second', name: 'Second' });
     const second = await clients.plan('codex', initial, 'http://127.0.0.1:18765', 'key', 'kimi/second'); await clients.apply(second.id, initial);
-    expect(parse(await readFile(file, 'utf8')).model).toBe('kimi/second');
+    expect(parse(await readFile(file, 'utf8')).model).toBe('second');
     await clients.restore('codex'); expect(await readFile(file, 'utf8')).toBe(original);
   });
   it('supports authenticated SOCKS5 profiles without embedding passwords in configuration', () => {

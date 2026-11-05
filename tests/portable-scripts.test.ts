@@ -36,7 +36,7 @@ it.each(['codex', 'claude'] as const)('executes the exported %s script, backs up
     expect(current.mcp_servers.example.command).toBe('example'); expect(current.model_providers.other.name).toBe('Other');
     expect(current.model_providers.model_bridge.experimental_bearer_token).toBe(token);
     expect(current.model_providers.model_bridge.base_url).toBe('http://192.168.31.21:18765/v1');
-    expect(JSON.parse(await readFile(current.model_catalog_json, 'utf8')).models[0].slug).toBe('kimi/coding');
+    expect(JSON.parse(await readFile(current.model_catalog_json, 'utf8')).models[0].slug).toBe('coding');
   } else {
     expect(current.permissions.allow).toEqual(['Read']); expect(current.mcpServers.example.command).toBe('example');
     expect(current.env.CUSTOM).toBe('keep'); expect(current.env.ANTHROPIC_API_KEY).toBeUndefined();

@@ -8,6 +8,7 @@ import type { Config } from '../core/config.js';
 import { codexCatalog, models } from '../core/catalog.js';
 
 const digest = (text: string | null) => createHash('sha256').update(text === null ? '\0missing' : text).digest('hex');
+const matchesModel = (entry: ReturnType<typeof models>[number], id?: string) => entry.id === id || entry.routingId === id || entry.members.some(r => `${r.connection.id}/${r.model.id}` === id);
 async function read(file: string) { try { return await readFile(file, 'utf8'); } catch (error: any) { if (error.code === 'ENOENT') return null; throw error; } }
 export type ClientName = 'codex' | 'claude';
 export function resolveClientAddress(address: string, localAddress: string, lanAddresses: string[]) {
@@ -119,7 +120,7 @@ export class ClientConfiguration {
       const isBridge = pointsToGateway(client, existing, address);
       canRestore ||= validBackup && isBridge;
       if (isBridge) {
-        const selected = models(config).find(entry => entry.id === selectedModel);
+        const selected = models(config).find(entry => matchesModel(entry,selectedModel));
         return { client, mode: 'bridge', serviceName: selected?.connection.name ?? (selectedModel ? '原服务已移除或停用' : '统一模型（未选择默认模型）'), ...(selectedModel ? { model: selectedModel } : {}),
           ...(selected ? { connectionId: selected.connection.id } : {}), modelAvailable: !!selected, canRestore };
       }
@@ -142,7 +143,7 @@ export class ClientConfiguration {
     return this.serialize(client, async () => {
       const settings = config(); const current = await this.status(client, settings, address);
       const available = models(settings).filter(entry => entry.model.tools);
-      const target = (current.mode === 'bridge' ? available.find(entry => entry.id === current.model) : undefined) ?? available[0];
+      const target = (current.mode === 'bridge' ? available.find(entry => matchesModel(entry,current.model)) : undefined) ?? available[0];
       if (!target) throw new Error('请先添加至少一个已启用且支持工具调用的模型，再启用统一模型模式。');
       const plan = await this.plan(client, settings, address, token, target.id);
       try { await this.applyPlan(plan.id, config()); }
@@ -151,7 +152,7 @@ export class ClientConfiguration {
     });
   }
   async plan(client: ClientName, config: Config, address: string, token: string, selected?: string) {
-    const target = selected ? models(config).find(m => m.id === selected && m.model.tools) : models(config).find(m => m.model.tools);
+    const target = selected ? models(config).find(m => matchesModel(m,selected) && m.model.tools) : models(config).find(m => m.model.tools);
     if (!target) throw new Error('Add an enabled model with tool-call support before connecting a client.');
     const file = this.file(client);
     const before = await read(file);

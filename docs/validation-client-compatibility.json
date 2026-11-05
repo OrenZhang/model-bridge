@@ -1,0 +1,76 @@
+{
+  "createdAt": "2026-11-05T09:29:19.425Z",
+  "http": {
+    "createdAt": "2026-11-05T09:28:52.149Z",
+    "base": "http://<LAN-IP>:18765/v1",
+    "results": [
+      {
+        "label": "chat-simple-name",
+        "status": 200,
+        "passed": true
+      },
+      {
+        "label": "responses-simple-name",
+        "status": 200,
+        "passed": true
+      },
+      {
+        "label": "messages-simple-name",
+        "status": 200,
+        "passed": true
+      },
+      {
+        "label": "chat-old-name",
+        "status": 200,
+        "passed": true
+      },
+      {
+        "label": "chat-streaming",
+        "status": 200,
+        "passed": true
+      }
+    ],
+    "nativeClientFilesUnchanged": true
+  },
+  "codex": {
+    "createdAt": "2026-11-05T09:29:19.425Z",
+    "mockUpstream": false,
+    "modelPools": false,
+    "codexVersion": "0.144.1",
+    "results": [
+      {
+        "provider": "chatgpt-simple-name",
+        "model": "gpt-5.6-sol",
+        "upstreamHost": "chatgpt.com",
+        "upstreamModel": "gpt-5.6-sol",
+        "upstreamProtocol": "responses",
+        "downstreamProtocol": "responses",
+        "thinkingProbe": true,
+        "validationKind": "real-codex-live-gateway",
+        "gatewayHost": "LAN interface",
+        "status": "passed",
+        "turns": 3,
+        "toolCalls": 3,
+        "requests": 6,
+        "encryptedReasoningReceived": 0,
+        "encryptedReasoningReplayed": 0,
+        "nativeReasoningReceived": 3,
+        "nativeReasoningReplayed": 8,
+        "toolResultsReplayed": 10,
+        "tokenUsage": {
+          "input": 29353,
+          "output": 387,
+          "reasoning": 150
+        },
+        "httpStatuses": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ]
+      }
+    ]
+  }
+}

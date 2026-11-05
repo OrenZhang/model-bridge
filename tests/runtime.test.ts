@@ -17,7 +17,7 @@ it('automatically discovers models after saving credentials and updates the Code
   await runtime.saveConnection({ id: 'provider', name: 'Provider', provider: 'custom', auth: 'api-key', baseUrl: `http://127.0.0.1:${(upstream.address() as any).port}/v1` }, 'fixture-api-key', true);
   await vi.waitFor(() => expect(runtime.discoveryStates().provider).toMatchObject({ phase: 'ready', count: 1 }));
   expect(runtime.store.get().connections[0]!.models[0]!.upstreamId).toBe('discovered-model');
-  expect(JSON.parse(await readFile(path.join(directory, 'codex-models.json'), 'utf8')).models[0].slug).toBe('provider/discovered-model');
+  expect(JSON.parse(await readFile(path.join(directory, 'codex-models.json'), 'utf8')).models[0].slug).toBe('discovered-model');
 });
 it('serializes concurrent configuration changes without losing another account', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'mb-config-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));

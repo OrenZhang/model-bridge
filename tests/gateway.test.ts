@@ -95,7 +95,7 @@ describe('gateway protocol matrix', () => {
     expect((await fetch(gateway.address + '/v1/models')).status).toBe(401);
     expect((await fetch(gateway.address + '/v1/models', { headers: { origin: 'https://attacker.invalid', authorization: 'Bearer gateway-test-key' } })).status).toBe(403);
     const response = await fetch(gateway.address + '/codex/models', { headers: { authorization: 'Bearer gateway-test-key' } });
-    const data: any = await response.json(); expect(data.models[0].slug).toBe('account/model');
+    const data: any = await response.json(); expect(data.models[0].slug).toBe('vendor-model');
     expect(data.models[0].input_modalities).toEqual(['text']);
   });
   it('never falls through to a different model when the requested one is missing', async () => {

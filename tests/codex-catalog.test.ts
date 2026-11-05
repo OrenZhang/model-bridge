@@ -29,7 +29,7 @@ it('the bundled Codex loads all providers from the generated catalog without sig
     await rpc('initialize', { clientInfo: { name: 'model_bridge_test', version: '0.1.0' } });
     child.stdin.write(JSON.stringify({ method: 'initialized' }) + '\n');
     const catalog = await rpc('model/list', { includeHidden: false });
-    expect(catalog.data.map((model: any) => model.model)).toEqual(expect.arrayContaining(['kimi/test-model', 'minimax/test-model']));
+    expect(catalog.data.map((model: any) => model.model)).toEqual(expect.arrayContaining(['test-model~kimi-none', 'test-model']));
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill();
     await childClosed; lines.close();
