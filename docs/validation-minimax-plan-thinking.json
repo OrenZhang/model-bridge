@@ -1,0 +1,221 @@
+{
+  "createdAt": "2026-11-05T08:16:55.780Z",
+  "codexVersion": "0.144.1",
+  "transport": "isolated Codex CLI app-server -> temporary updated gateway -> existing local gateway -> official MiniMax subscription endpoint",
+  "nativeClientFilesUnchanged": true,
+  "credentialHandling": "Provider credentials stayed in the existing gateway. Only its local client key was used by the temporary adapter.",
+  "results": [
+    {
+      "provider": "minimax-plan-minimax-m2-7",
+      "model": "subscription/MiniMax-M2.7",
+      "upstreamHost": "agent.minimax.cn",
+      "upstreamModel": "MiniMax-M2.7",
+      "upstreamProtocol": "messages",
+      "downstreamProtocol": "responses",
+      "thinkingProbe": true,
+      "validationKind": "real-codex-live-gateway",
+      "gatewayHost": "127.0.0.1",
+      "status": "passed",
+      "turns": 3,
+      "toolCalls": 3,
+      "requests": 5,
+      "encryptedReasoningReceived": 3,
+      "encryptedReasoningReplayed": 4,
+      "nativeReasoningReceived": 0,
+      "nativeReasoningReplayed": 0,
+      "toolResultsReplayed": 8,
+      "tokenUsage": {
+        "input": 30996,
+        "output": 544,
+        "reasoning": null
+      },
+      "httpStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "tokenUsageNote": "Thinking tokens are included in output; upstream does not report a separate reasoning count."
+    },
+    {
+      "provider": "minimax-plan-minimax-m3",
+      "model": "subscription/MiniMax-M3",
+      "upstreamHost": "agent.minimax.cn",
+      "upstreamModel": "MiniMax-M3",
+      "upstreamProtocol": "messages",
+      "downstreamProtocol": "responses",
+      "thinkingProbe": true,
+      "validationKind": "real-codex-live-gateway",
+      "gatewayHost": "127.0.0.1",
+      "status": "passed",
+      "turns": 3,
+      "toolCalls": 3,
+      "requests": 5,
+      "encryptedReasoningReceived": 3,
+      "encryptedReasoningReplayed": 8,
+      "nativeReasoningReceived": 0,
+      "nativeReasoningReplayed": 0,
+      "toolResultsReplayed": 8,
+      "tokenUsage": {
+        "input": 31691,
+        "output": 647,
+        "reasoning": null
+      },
+      "httpStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "tokenUsageNote": "Thinking tokens are included in output; upstream does not report a separate reasoning count."
+    },
+    {
+      "provider": "minimax-plan-minimax-m3-1-flash",
+      "model": "subscription/MiniMax-M3.1-Flash",
+      "upstreamHost": "agent.minimax.cn",
+      "upstreamModel": "MiniMax-M3.1-Flash",
+      "upstreamProtocol": "messages",
+      "downstreamProtocol": "responses",
+      "thinkingProbe": true,
+      "validationKind": "real-codex-live-gateway",
+      "gatewayHost": "127.0.0.1",
+      "status": "passed",
+      "turns": 3,
+      "toolCalls": 4,
+      "requests": 6,
+      "encryptedReasoningReceived": 4,
+      "encryptedReasoningReplayed": 7,
+      "nativeReasoningReceived": 0,
+      "nativeReasoningReplayed": 0,
+      "toolResultsReplayed": 13,
+      "tokenUsage": {
+        "input": 38779,
+        "output": 943,
+        "reasoning": null
+      },
+      "httpStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "tokenUsageNote": "Thinking tokens are included in output; upstream does not report a separate reasoning count."
+    }
+  ],
+  "wireEvidence": {
+    "nativeThinkingBlocksSent": 19,
+    "signedThinkingBlocksSent": 19,
+    "requests": [
+      {
+        "model": "MiniMax-M2.7",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 0
+      },
+      {
+        "model": "MiniMax-M2.7",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 0
+      },
+      {
+        "model": "MiniMax-M2.7",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 1
+      },
+      {
+        "model": "MiniMax-M2.7",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 1
+      },
+      {
+        "model": "MiniMax-M2.7",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 2
+      },
+      {
+        "model": "MiniMax-M3",
+        "thinking": {
+          "type": "adaptive"
+        },
+        "outputEffort": null,
+        "replayedThinking": 0
+      },
+      {
+        "model": "MiniMax-M3",
+        "thinking": {
+          "type": "adaptive"
+        },
+        "outputEffort": null,
+        "replayedThinking": 1
+      },
+      {
+        "model": "MiniMax-M3",
+        "thinking": {
+          "type": "adaptive"
+        },
+        "outputEffort": null,
+        "replayedThinking": 2
+      },
+      {
+        "model": "MiniMax-M3",
+        "thinking": {
+          "type": "adaptive"
+        },
+        "outputEffort": null,
+        "replayedThinking": 2
+      },
+      {
+        "model": "MiniMax-M3",
+        "thinking": {
+          "type": "adaptive"
+        },
+        "outputEffort": null,
+        "replayedThinking": 3
+      },
+      {
+        "model": "MiniMax-M3.1-Flash",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 0
+      },
+      {
+        "model": "MiniMax-M3.1-Flash",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 0
+      },
+      {
+        "model": "MiniMax-M3.1-Flash",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 1
+      },
+      {
+        "model": "MiniMax-M3.1-Flash",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 1
+      },
+      {
+        "model": "MiniMax-M3.1-Flash",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 2
+      },
+      {
+        "model": "MiniMax-M3.1-Flash",
+        "thinking": null,
+        "outputEffort": null,
+        "replayedThinking": 3
+      }
+    ]
+  }
+}

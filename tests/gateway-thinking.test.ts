@@ -39,7 +39,7 @@ function upstreamResponse(res: ServerResponse, json: boolean, final: boolean) {
   res.write(sse({ type: 'message_delta', delta: { stop_reason: message.stop_reason }, usage: { output_tokens: 20 } }, 'message_delta'));
   res.end(sse({ type: 'message_stop' }, 'message_stop'));
 }
-async function setup(json = false) {
+async function setup(json = false, subscription = false) {
   const requests: any[] = [];
   const upstream = createServer(async (req, res) => {
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
@@ -50,10 +50,18 @@ async function setup(json = false) {
   cleanup.push(() => new Promise<void>(resolve => upstream.close(() => resolve())));
   const directory = await mkdtemp(path.join(tmpdir(), 'model-bridge-thinking-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const config = ConfigSchema.parse({ port: 0, defaultProxy: { mode: 'direct' }, clients: ['alice', 'bob'].map(id => ({ id, name: id, tokenHash: tokenHash(`${id}-gateway-key`) })), connections: [{
-    id: 'vendor', name: 'Signed thinking fixture', provider: 'anthropic', auth: 'none', baseUrl: `http://127.0.0.1:${(upstream.address() as any).port}/v1`, models: ['thinking', 'other'].map(id => ({ id, name: id, upstreamId: `vendor-${id}`, protocols: ['messages'] })),
+    id: 'vendor', name: 'Signed thinking fixture', provider: subscription ? 'minimax' : 'anthropic', auth: subscription ? 'subscription' : 'none', baseUrl: subscription ? 'https://agent.minimax.cn/mavis/api/v1/llm/v1' : `http://127.0.0.1:${(upstream.address() as any).port}/v1`, models: ['thinking', 'other'].map(id => ({ id, name: id, upstreamId: subscription ? 'MiniMax-M3.1-Flash' : `vendor-${id}`, protocols: ['messages'] })),
   }] });
   const secrets = { get: async () => undefined }; const network = new Network(() => config, secrets);
-  const gateway = await startGateway({ config: () => config, secrets, network, usage: new UsageStore(directory) }); cleanup.push(() => gateway.close());
+  if (subscription) {
+    const request = network.request.bind(network);
+    network.request = async (connection, url, init) => {
+      expect(url).toBe('https://agent.minimax.cn/mavis/api/v1/llm/v1/messages');
+      expect(init?.headers?.authorization).toBe('Bearer fixture-subscription');
+      return request(connection, `http://127.0.0.1:${(upstream.address() as any).port}/v1/messages`, init);
+    };
+  }
+  const gateway = await startGateway({ config: () => config, secrets, network, subscriptionCredentials: async () => ({token:'fixture-subscription'}), usage: new UsageStore(directory) }); cleanup.push(() => gateway.close());
   return { gateway, requests };
 }
 function payload(stream: boolean, history?: any[]) {
@@ -79,11 +87,12 @@ function replay(output: any[]) {
 }
 
 describe('HTTP thinking round trips with simulated signed Messages upstream', () => {
-  for (const json of [false, true]) for (const streaming of [false, true]) {
-    it(`${json ? 'JSON fallback' : 'SSE'} upstream → ${streaming ? 'streaming' : 'JSON'} Responses preserves signed history and parallel tools`, async () => {
-      const { gateway, requests } = await setup(json);
+  for (const subscription of [false, true]) for (const json of [false, true]) for (const streaming of [false, true]) {
+    it(`${subscription ? 'MiniMax subscription' : 'Anthropic'} ${json ? 'JSON fallback' : 'SSE'} upstream → ${streaming ? 'streaming' : 'JSON'} Responses preserves signed history and parallel tools`, async () => {
+      const { gateway, requests } = await setup(json, subscription);
       const first = await readResponse(await send(gateway.address, payload(streaming)), streaming);
-      expect(requests[0].thinking).toEqual({ type: 'enabled', budget_tokens: 4096 });
+      if (subscription) { expect(requests[0].thinking).toBeUndefined(); expect(requests[0].output_config).toEqual({effort:'medium'}); }
+      else expect(requests[0].thinking).toEqual({ type: 'enabled', budget_tokens: 4096 });
       expect(requests[0].stream).toBe(true);
       expect(first.result.output.map((item: any) => item.type)).toEqual(['reasoning', 'reasoning', 'function_call', 'function_call']);
       expect(first.result.output[0].summary).toEqual([{ type: 'summary_text', text: thinking.thinking }]);

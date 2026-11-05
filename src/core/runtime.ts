@@ -27,6 +27,18 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     try { email = JSON.parse(Buffer.from(auth.tokens?.id_token?.split('.')[1] ?? '', 'base64url').toString('utf8')).email; } catch { /* Hint only; actual credentials are checked on use. */ }
     if (typeof auth.tokens?.account_id === 'string') await store.update(config => { const current = config.connections.find(c => c.id === connection.id)!; current.accountId = auth.tokens.account_id; if (typeof email === 'string') current.accountEmail = email; });
   }
+  // Existing subscription entries predate the official thinking controls.
+  // Fill missing capabilities without touching client settings, auth, or a user's explicit levels.
+  const missingThinking = store.get().connections.some(c => c.auth === 'subscription' && c.provider === 'minimax' && c.models.some(m => !m.reasoning.length && minimaxPresetModels(c)?.some(p => p.id === m.upstreamId)));
+  if (missingThinking) await store.update(config => {
+    for (const connection of config.connections.filter(c => c.auth === 'subscription' && c.provider === 'minimax')) {
+      const presets = minimaxPresetModels(connection);
+      for (const model of connection.models.filter(m => !m.reasoning.length)) {
+        const preset = presets?.find(p => p.id === model.upstreamId);
+        if (preset?.reasoning) model.reasoning = ModelSchema.shape.reasoning.parse(preset.reasoning);
+      }
+    }
+  });
 
   const usage = new UsageStore(path.join(directory, 'usage'));
   let managed: ManagedNetworks;
@@ -165,7 +177,11 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       const latest = current.connections.find(c => c.id === id);
       if (!latest || latest.baseUrl !== connection.baseUrl || latest.auth !== connection.auth || latest.secretRef !== connection.secretRef || (keyVersions.get(id) ?? 0) !== keyVersion) throw new Error('连接已更改，正在重新获取模型。');
       const existing = new Map(latest.models.map(m => [m.upstreamId, m]));
-      for (const m of found) if (!existing.has(m.id)) existing.set(m.id, ModelSchema.parse({ id: m.id, name: m.name, upstreamId: m.id, protocols: m.protocols ?? defaultProtocols, ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}), ...(typeof m.tools === 'boolean' ? { tools: m.tools } : {}), ...(m.reasoning ? { reasoning: m.reasoning } : {}), images: m.images ?? false }));
+      for (const m of found) {
+        const previous = existing.get(m.id);
+        if (previous && connection.auth === 'subscription' && connection.provider === 'minimax' && m.reasoning) previous.reasoning = ModelSchema.shape.reasoning.parse(m.reasoning);
+        if (!previous) existing.set(m.id, ModelSchema.parse({ id: m.id, name: m.name, upstreamId: m.id, protocols: m.protocols ?? defaultProtocols, ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}), ...(typeof m.tools === 'boolean' ? { tools: m.tools } : {}), ...(m.reasoning ? { reasoning: m.reasoning } : {}), images: m.images ?? false }));
+      }
       latest.models = [...existing.values()];
     });
     await clients.updateCatalog(updated); return updated.connections.find(c => c.id === id)!.models;

@@ -75,3 +75,16 @@ it('keeps MiniMax authorization visible through discovery and restart without re
   expect(current.store.get().connections[0]!.credentialVersion).toBe(version);
   expect(current.store.get().connections[0]!.models.length).toBeGreaterThan(0);
 }, 10000);
+
+it('fills missing thinking controls on existing plan models without rewriting native client settings', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'mb-plan-migration-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const store = await new ConfigStore(directory).load();
+  await store.save({ port: 0, connections: [{ id: 'minimax', name: 'Plan', provider: 'minimax', auth: 'subscription', baseUrl: subscriptionEndpoints('minimax').base, models: [{ id: 'custom-alias', name: 'Keep my label', upstreamId: 'MiniMax-M3.1-Flash', protocols: ['messages'], enabled: false, price: { input: 1, output: 2 } }, { id: 'existing', name: 'Existing', upstreamId: 'MiniMax-M3', protocols: ['messages'], reasoning: ['none'] }] }] });
+  const { mkdir, writeFile, readFile } = await import('node:fs/promises');
+  await mkdir(path.join(directory, '.codex')); await writeFile(path.join(directory, '.codex', 'config.toml'), 'model = "original"\n');
+  const runtime = await createRuntime(directory, {get:async()=>undefined}, directory); cleanup.push(()=>runtime.close());
+  const [migrated, explicit] = runtime.store.get().connections[0]!.models;
+  expect(migrated).toMatchObject({id:'custom-alias',name:'Keep my label',enabled:false,price:{input:1,output:2},reasoning:['medium','low','high','xhigh','max']});
+  expect(explicit!.reasoning).toEqual(['none']);
+  expect(await readFile(path.join(directory, '.codex', 'config.toml'), 'utf8')).toBe('model = "original"\n');
+});

@@ -27,6 +27,7 @@ import { UsageStore } from '../dist/core/usage.js';
 import { startGateway, tokenHash } from '../dist/gateway/server.js';
 import { SSEDecoder, sse } from '../dist/gateway/sse.js';
 
+const thinkingProbe = process.argv.includes('--thinking-probe');
 const mockPools = process.argv.includes('--mock-pools');
 const mock = process.argv.includes('--mock') || mockPools;
 const root = await mkdtemp(path.join(os.tmpdir(), 'model-bridge-codex-validation-'));
@@ -157,7 +158,7 @@ async function observeGateway(gateway, route, metrics) {
 async function validateProvider(gateway, provider, route, catalog) {
   const metadata = routeMetadata[route];
   if (!metadata || !['chat', 'messages', 'responses'].includes(metadata.upstreamProtocol) || typeof metadata.upstreamHost !== 'string' || typeof metadata.upstreamModel !== 'string') { results.push({ provider, model: route, status: 'blocked', error: 'Validation requires selected-route metadata with upstreamHost, upstreamModel and upstreamProtocol.' }); return; }
-  const metrics = { provider, model: route, upstreamHost: metadata.upstreamHost, upstreamModel: metadata.upstreamModel, upstreamProtocol: metadata.upstreamProtocol, downstreamProtocol: 'responses', validationKind: mock ? 'real-codex-simulated-upstream' : 'real-codex-live-gateway', gatewayHost: new URL(gateway.url).hostname, status: 'failed', turns: 0, toolCalls: 0, requests: 0, encryptedReasoningReceived: 0, encryptedReasoningReplayed: 0, nativeReasoningReceived: 0, nativeReasoningReplayed: 0, toolResultsReplayed: 0, tokenUsage: { input: 0, output: 0, reasoning: 0 }, httpStatuses: [] };
+  const metrics = { provider, model: route, upstreamHost: metadata.upstreamHost, upstreamModel: metadata.upstreamModel, upstreamProtocol: metadata.upstreamProtocol, downstreamProtocol: 'responses', thinkingProbe, validationKind: mock ? 'real-codex-simulated-upstream' : 'real-codex-live-gateway', gatewayHost: new URL(gateway.url).hostname, status: 'failed', turns: 0, toolCalls: 0, requests: 0, encryptedReasoningReceived: 0, encryptedReasoningReplayed: 0, nativeReasoningReceived: 0, nativeReasoningReplayed: 0, toolResultsReplayed: 0, tokenUsage: { input: 0, output: 0, reasoning: 0 }, httpStatuses: [] };
   results.push(metrics);
   const folder = path.join(root, provider + '-' + nonce()); const codexHome = path.join(folder, '.codex'); const workspace = path.join(folder, 'fixture');
   await mkdir(codexHome, { recursive: true, mode: 0o700 }); await mkdir(workspace, { recursive: true, mode: 0o700 });
@@ -208,13 +209,19 @@ async function validateProvider(gateway, provider, route, catalog) {
       '[MB_TURN_2] Call bridge_probe twice with operation read, once slot a and once slot b. You may run these together. Verify both receipts agree and reply with the original marker and receipt.',
       '[MB_TURN_3] Without using tools, recall the marker and receipt from the previous turns. Reply with both exact values.',
     ];
-    for (const text of prompts) {
+    if (thinkingProbe) {
+      prompts[0] += ' Also compute 17*23 + 19*29, check the arithmetic, and include the checksum in your answer. Do not replace the requested tool call with mental simulation.';
+      prompts[1] += ' Independently verify the previous checksum, then compute (checksum*37+11) modulo 997. Include this second checksum in your answer.';
+      prompts[2] += ' Include the sum of both computed checksums in your answer.';
+    }
+    for (const [turnIndex, text] of prompts.entries()) {
       let timer; const completion = new Promise((resolve, reject) => { currentTurn = { resolve, reject, texts: [] }; timer = setTimeout(() => reject(new Error('Codex turn timed out after 120 seconds.')), 120000); });
       completion.catch(() => {});
       try {
         await rpc('turn/start', { threadId: thread.id, input: [{ type: 'text', text }], effort: 'low', summary: 'none' });
         const answer = await completion;
         assert(answer.includes(marker) && answer.includes(receipt), 'Codex response did not preserve the tool receipt and multi-turn marker.');
+        if (thinkingProbe && !mock) assert(answer.includes(['942', '967', '1909'][turnIndex]), 'Codex did not preserve the computed multi-turn checksums.');
         metrics.turns++;
       } finally { clearTimeout(timer); currentTurn = undefined; }
     }

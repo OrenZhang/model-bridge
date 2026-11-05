@@ -1,4 +1,5 @@
 import { PoolRouter } from './pool-router.js';
+import { minimaxSubscriptionThinking } from '../auth/minimax-thinking.js';
 import { poolCandidates, reasoningScope } from '../core/model-pool.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -109,6 +110,7 @@ export async function startGateway(options: GatewayOptions) {
         payload = { ...payload, stream: true, store: false, instructions: payload.instructions ?? '' };
         if (typeof payload.input === 'string') payload.input = [{ role: 'user', content: [{ type: 'input_text', text: payload.input }] }];
       } else if (connection.auth === 'subscription') {
+        if (connection.provider === 'minimax' && upstream === 'messages') minimaxSubscriptionThinking(payload, model.upstreamId, canonical ?? { effort: input.output_config?.effort, thinking: input.thinking });
         if (!options.subscriptionCredentials) throw new BridgeError(503, 'subscription_unavailable', 'Subscription login is unavailable.');
         const credentials = await options.subscriptionCredentials(connection);
         headers.authorization = `Bearer ${credentials.token}`;
