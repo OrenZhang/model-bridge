@@ -6,7 +6,7 @@ export class DesktopVault implements SecretStore {
   private writes: Promise<void> = Promise.resolve();
   constructor(private file: string) {}
   private async read(): Promise<Record<string, string>> {
-    if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error('The operating system credential store is unavailable.');
+    if (!await safeStorage.isAsyncEncryptionAvailable() || process.platform==='linux' && ['basic_text','unknown'].includes(safeStorage.getSelectedStorageBackend())) throw new Error('系统凭据库不可用。Linux 请启用 GNOME Keyring / libsecret 或 KWallet，应用不使用 basic_text 保存密钥。');
     try { return JSON.parse((await safeStorage.decryptStringAsync(await readFile(this.file))).result); }
     catch (error: any) { if (error.code === 'ENOENT') return {}; throw new Error('Could not open the encrypted credential store.'); }
   }

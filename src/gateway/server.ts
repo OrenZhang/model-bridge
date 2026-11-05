@@ -1,5 +1,7 @@
 import { PoolRouter } from './pool-router.js';
 import { kimiSubscriptionThinking } from '../auth/kimi-models.js';
+import { coSailHeaders } from '../auth/host-identity.js';
+import { controlledRequest } from '../shared/reasoning-modes.js';
 import { chatgptPayload } from '../auth/chatgpt-payload.js';
 import { minimaxSubscriptionThinking } from '../auth/minimax-thinking.js';
 import { mergedModelId, modelGroupId, poolCandidates, reasoningScope } from '../core/model-pool.js';
@@ -12,7 +14,7 @@ import { codexCatalog, openaiCatalog, anthropicCatalog } from '../core/catalog.j
 import { Network } from '../core/network.js';
 import type { SecretStore } from '../core/store.js';
 import { UsageStore, unknownTokens, usageTokens, estimatedCost, type Tokens } from '../core/usage.js';
-import { decodeRequest, encodeRequest, UpstreamDecoder, DownstreamEncoder } from './codec.js';
+import { applyThinking, decodeRequest, encodeRequest, UpstreamDecoder, DownstreamEncoder } from './codec.js';
 import { SSEDecoder, sse } from './sse.js';
 import { ReasoningVault, hasGatewayReasoning } from './reasoning.js';
 
@@ -47,6 +49,7 @@ export interface GatewayOptions {
   poolRouter?: PoolRouter;
 }
 export async function startGateway(options: GatewayOptions) {
+  const deviceId=options.config().deviceId??randomUUID();
   const inflight = new Set<AbortController>();
   const handlers = new Set<Promise<void>>();
   const poolRouter = options.poolRouter ?? new PoolRouter();
@@ -75,7 +78,7 @@ export async function startGateway(options: GatewayOptions) {
       if (url.pathname === '/healthz' && req.method === 'GET') { json(res, 200, { status: 'ok', service: 'model-bridge' }); return; }
       const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') ?? (typeof req.headers['x-api-key'] === 'string' ? req.headers['x-api-key'] : '');
       const hash = Buffer.from(tokenHash(token), 'hex');
-      const client = options.config().clients.find(c => timingSafeEqual(hash, Buffer.from(c.tokenHash, 'hex')));
+      const client = options.config().clients.find(c => c.enabled && timingSafeEqual(hash, Buffer.from(c.tokenHash, 'hex')));
       if (!token || !client) throw new BridgeError(401, 'invalid_api_key', 'A valid Model Bridge client key is required.');
       clientId = client.id;
       if (req.method === 'GET' && url.pathname === '/v1/models') { json(res, 200, req.headers['anthropic-version'] ? anthropicCatalog(options.config()) : openaiCatalog(options.config())); return; }
@@ -90,13 +93,15 @@ export async function startGateway(options: GatewayOptions) {
       const previousPools = candidates?.length ? options.config().connections.flatMap(connection=>connection.models.filter(model=>model.upstreamId===candidates[0]!.model.upstreamId).map(model=>modelGroupId(connection,model))) : [];
       route = candidates?.length ? await poolRouter.select(mergedModelId(candidates[0]!.model.upstreamId), candidates, input, clientId, protocol, reasoningVault, typeof session === 'string' ? session : undefined, [...new Set(previousPools)]) : resolveRoute(options.config(), selected);
       const { connection, model } = route;
+      let controlled: any;
+      try { controlled = controlledRequest(connection,model,protocol,input); } catch(error) { throw new BridgeError(400,'invalid_reasoning_policy',String((error as Error).message)); }
       if (input.tools?.length && !model.tools) throw new BridgeError(400, 'tools_unsupported', 'This model does not support tool calls.');
       const upstream = model.protocols.includes(protocol) ? protocol : model.protocols[0]!;
       const translated = upstream !== protocol || hasGatewayReasoning(input);
       const reasoning = reasoningVault.context(reasoningScope(clientId, route), upstream, connection.provider, model.upstreamId);
-      const canonical = translated ? decodeRequest(protocol, input, reasoning) : undefined;
+      const canonical = translated ? decodeRequest(protocol, controlled, reasoning) : undefined;
       if (canonical && !model.images && canonical.messages.some(m => m.content.some(p => p.type === 'image'))) throw new BridgeError(400, 'images_unsupported', 'This model does not accept images.');
-      let payload: any = canonical ? encodeRequest(upstream, canonical, model.upstreamId, reasoning) : { ...input, model: model.upstreamId };
+      let payload: any = canonical ? encodeRequest(upstream, canonical, model.upstreamId, reasoning) : { ...controlled, model: model.upstreamId };
       const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
       if (upstream === 'messages') {
         headers['anthropic-version'] = !translated && typeof req.headers['anthropic-version'] === 'string' ? req.headers['anthropic-version'] : '2023-06-01';
@@ -113,12 +118,12 @@ export async function startGateway(options: GatewayOptions) {
         headers.originator = 'model_bridge';
         payload = chatgptPayload(payload);
       } else if (connection.auth === 'subscription') {
-        if (connection.provider === 'kimi') kimiSubscriptionThinking(payload, upstream, model, canonical ?? { effort: input.reasoning?.effort ?? input.reasoning_effort ?? input.output_config?.effort, thinking: input.thinking });
-        if (connection.provider === 'minimax' && upstream === 'messages') minimaxSubscriptionThinking(payload, model.upstreamId, canonical ?? { effort: input.output_config?.effort, thinking: input.thinking });
+        if (connection.provider === 'kimi') kimiSubscriptionThinking(payload, upstream, model, canonical ?? { effort: controlled.reasoning?.effort ?? controlled.reasoning_effort ?? controlled.output_config?.effort, thinking: controlled.thinking });
+        if (connection.provider === 'minimax' && upstream === 'messages') minimaxSubscriptionThinking(payload, model.upstreamId, canonical ?? { effort: controlled.output_config?.effort, thinking: controlled.thinking });
         if (!options.subscriptionCredentials) throw new BridgeError(503, 'subscription_unavailable', 'Subscription login is unavailable.');
         const credentials = await options.subscriptionCredentials(connection);
         headers.authorization = `Bearer ${credentials.token}`;
-        headers['user-agent'] = 'ModelBridge/0.1.0';
+        Object.assign(headers,coSailHeaders(deviceId,connection.provider==='kimi'));
         if (connection.provider === 'kimi' && upstream === 'messages') {
           endpoint += '?beta=true';
           if (payload.thinking?.type === 'enabled') payload.thinking = { type: 'adaptive' };
@@ -128,6 +133,19 @@ export async function startGateway(options: GatewayOptions) {
         if (!key) throw new BridgeError(401, 'credentials_missing', 'Add an API key for the selected connection.');
         if (upstream === 'messages') { headers['x-api-key'] = key; if (connection.provider !== 'anthropic') headers.authorization = `Bearer ${key}`; }
         else headers.authorization = `Bearer ${key}`;
+      }
+      const mode = connection.reasoningModes[model.upstreamId] ?? 'client';
+      if (!['client','provider'].includes(mode) && connection.auth !== 'subscription') {
+        const selection = canonical ?? {effort:controlled.reasoning?.effort ?? controlled.reasoning_effort ?? controlled.output_config?.effort,thinking:controlled.thinking,summary:controlled.reasoning?.summary,maxTokens:controlled.max_output_tokens ?? controlled.max_tokens};
+        delete payload.thinking; delete payload.reasoning_effort;
+        applyThinking(payload,upstream,selection,model.upstreamId,reasoning);
+      }
+      if (connection.provider === 'deepseek' && upstream === 'chat') {
+        const effort = canonical?.effort ?? controlled.reasoning_effort;
+        const off = effort === 'none' || (canonical?.thinking ?? controlled.thinking)?.type === 'disabled';
+        payload.thinking = {type:off?'disabled':'enabled'};
+        if (off) delete payload.reasoning_effort;
+        else if (effort) payload.reasoning_effort = ({minimal:'low',medium:'high',xhigh:'high',ultra:'max'} as Record<string,string>)[effort] ?? effort;
       }
       const destination = new URL(endpoint);
       if (['localhost', '127.0.0.1', '[::1]'].includes(destination.hostname) && destination.port === new URL(address).port) throw new BridgeError(400, 'gateway_loop', 'An upstream connection cannot point back to this gateway.');

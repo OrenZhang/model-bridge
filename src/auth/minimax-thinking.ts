@@ -9,7 +9,7 @@ export function minimaxSubscriptionThinking(payload: any, model: string, selecti
   const legacy = /^MiniMax-M2\.7(?:-highspeed)?$/.test(model);
   if (!forcedOn && !switchable && !legacy) return;
   if (disabled && !switchable) throw new BridgeError(400, 'thinking_always_on', 'This MiniMax subscription model does not support disabling thinking.');
-  if (forcedOn) delete payload.thinking;
+  if (forcedOn || legacy) delete payload.thinking;
   else if (switchable) payload.thinking = { type: disabled ? 'disabled' : 'adaptive' };
   // M2.7 retains the provider default; never invent an Anthropic thinking budget.
   const output = { ...payload.output_config }; delete output.effort;

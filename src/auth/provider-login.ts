@@ -1,5 +1,6 @@
+import { coSailHeaders } from './host-identity.js';
 import { EventEmitter } from 'node:events';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BridgeError, type Connection } from '../core/config.js';
 import type { Network } from '../core/network.js';
@@ -37,7 +38,7 @@ export class ProviderLogin extends EventEmitter {
   private refreshTask?: Promise<Tokens>;
   private writes: Promise<unknown> = Promise.resolve();
   private ref: string;
-  constructor(private connection: Connection, private network: Network, private secrets: SecretStore, private pause: (ms: number, signal: AbortSignal) => Promise<unknown> = (ms, signal) => delay(ms, undefined, { signal })) {
+  constructor(private connection: Connection, private network: Network, private secrets: SecretStore, private pause: (ms: number, signal: AbortSignal) => Promise<unknown> = (ms, signal) => delay(ms, undefined, { signal }), private identity:Record<string,string>=coSailHeaders(randomUUID(),connection.provider==='kimi')) {
     super(); this.endpoints = subscriptionEndpoints(connection.provider, connection.region);
     if (connection.baseUrl.replace(/\/+$/, '') !== this.endpoints.base) throw new Error('Subscription credentials require the official regional endpoint.');
     this.ref = `subscription:${connection.provider}:${connection.region}:${connection.id}`;
@@ -62,7 +63,7 @@ export class ProviderLogin extends EventEmitter {
   }
   private publish(state: LoginState) { this.state = state; this.emit('state', state); }
   private async form(endpoint: string, values: Record<string, string>, signal?: AbortSignal) {
-    const response = await this.network.request(this.connection, this.endpoints.host + endpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': 'ModelBridge/0.1.0' }, body: new URLSearchParams(values).toString(), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
+    const response = await this.network.request(this.connection, this.endpoints.host + endpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', ...this.identity }, body: new URLSearchParams(values).toString(), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
     const data = await response.json() as any;
     return { ok: response.ok, data, status: response.status };
   }
@@ -112,7 +113,7 @@ export class ProviderLogin extends EventEmitter {
       const tokens = tokenGrant(data, this.connection.provider);
       if (this.connection.provider === 'kimi') {
         try {
-          const profile = await this.network.request(this.connection, this.endpoints.base + '/me', { headers: { authorization: `Bearer ${tokens.access}`, 'user-agent': 'ModelBridge/0.1.0' }, signal: AbortSignal.any([signal,AbortSignal.timeout(15000)]) });
+          const profile = await this.network.request(this.connection, this.endpoints.base + '/me', { headers: { authorization: `Bearer ${tokens.access}`, ...this.identity }, signal: AbortSignal.any([signal,AbortSignal.timeout(15000)]) });
           if (profile.ok) { const p = await profile.json() as any; if (text(p.user_id)) tokens.accountId = p.user_id; if (text(p.email ?? p.nickname)) tokens.account = p.email ?? p.nickname; }
           else await profile.body?.cancel();
         } catch { signal.throwIfAborted(); /* Profile hints are optional. */ }

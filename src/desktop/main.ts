@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { writeFile, readFile, stat } from 'node:fs/promises';
 import { createRuntime, type Runtime } from '../core/runtime.js';
 import { DesktopVault } from './vault.js';
-import { usageCsv, usageView } from '../core/usage.js';
+import { usageCsv, usageView, usageSummary } from '../core/usage.js';
 import { resolveClientAddress } from '../clients/configure.js';
 import { atomicWrite } from '../core/store.js';
 import { strToU8, zipSync } from 'fflate';
@@ -46,9 +46,10 @@ else {
             const filters = z.object({ clientId: z.string().optional(), provider: z.string().optional(), connectionId: z.string().optional(), model: z.string().optional() }).parse(payload?.filters ?? {});
             const records = await active.usage.list(days);
             const config = active.store.get(); const address = active.gateway.address;
+            const view=usageView(records,filters,days);
             const [codex, claude] = await Promise.all(['codex', 'claude'].map(client => active.clients.status(client as 'codex' | 'claude', config, address)));
             const modelCatalog = models(config).map(entry => ({ id: entry.id, name: entry.model.name, provider: entry.connection.provider, tools: entry.model.tools, members: entry.members.map(r => ({ connectionId: r.connection.id, modelId: r.model.id, name: r.connection.name, model: r.model.upstreamId })) }));
-            return { config, address, modelCatalog, managedModels: managedModels(config).map(entry => ({ id: entry.id, name: entry.model.name, provider: entry.connection.provider, enabled: entry.enabled, mixed: entry.mixed, exposedAccounts: entry.exposedAccounts, members: entry.members.map(m => ({connectionId:m.connection.id,modelId:m.model.id,name:m.connection.name,model:m.model.upstreamId})) })), clientStatuses: { codex, claude }, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), connectionChecks: active.connectionStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...usageView(records, filters, days), usageWriteFailed: active.usageWriteFailed() };
+            return { config, accessKeys:config.clients.filter(c=>!['codex','claude','generic'].includes(c.id)).map(c=>({id:c.id,name:c.name,enabled:c.enabled,...usageSummary(records.filter(r=>r.clientId===c.id))})), address, modelCatalog, managedModels: managedModels(config).map(entry => ({ id: entry.id, name: entry.model.name, provider: entry.connection.provider, enabled: entry.enabled, mixed: entry.mixed, exposedAccounts: entry.exposedAccounts, members: entry.members.map(m => ({connectionId:m.connection.id,modelId:m.model.id,name:m.connection.name,model:m.model.upstreamId})) })), clientStatuses: { codex, claude }, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), connectionChecks: active.connectionStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...view,usageOptions:{...view.usageOptions,clientId:[...new Set([...(view.usageOptions.clientId??[]),...config.clients.map(c=>c.id)])]}, usageWriteFailed: active.usageWriteFailed() };
           }
           case 'connection.save': return active.saveConnection(payload.connection, payload.apiKey ? z.string().max(20000).parse(payload.apiKey) : undefined, payload.autoDiscover !== false);
           case 'model.exposure': return active.setModelExposure(z.string().parse(payload.id), z.boolean().parse(payload.enabled));
@@ -68,6 +69,9 @@ else {
           case 'device.open': { const url = active.loginFor(z.string().parse(payload.id)).state.verificationUrl; if (url) await shell.openExternal(url); return true; }
           case 'local.detect': return active.localAccounts.scan();
           case 'local.import': return active.importLocalAccount(z.string().parse(payload.id));
+          case 'access.create': return active.createAccessKey(z.string().trim().min(1).max(100).parse(payload.name));
+          case 'access.update': return active.updateAccessKey(z.string().parse(payload.id),z.object({name:z.string().trim().min(1).max(100).optional(),enabled:z.boolean().optional()}).parse(payload));
+          case 'access.copy': {const {clipboard}=await import('electron');clipboard.writeText(await active.accessKey(z.string().parse(payload.id)));return true;}
           case 'service.lan': return active.setLanAccess(z.boolean().parse(payload.enabled));
           case 'network.save': return active.managed.save(payload);
           case 'network.refresh': return active.managed.refresh(z.string().parse(payload.id));
@@ -114,10 +118,10 @@ else {
           case 'client.export-portable': {
             const client = z.enum(['codex', 'claude']).parse(payload.client);
             const address = resolveClientAddress(z.string().parse(payload.address), active.gateway.address, active.gateway.lanAddresses());
-            const bundle = active.clients.portable(client, active.store.get(), address, await active.ensureClient(client));
+            const bundle = active.clients.portable(client, active.store.get(), address, await active.accessKey(z.string().parse(payload.keyId)));
             if (operation === 'client.portable-preview') return { client, address: bundle.address, filename: bundle.filename, preview: bundle.preview, requiresCatalog: !!bundle.catalog, filenames: Object.keys(bundle.files), instructions: bundle.instructions };
             if (operation === 'client.copy-portable') {
-              const part = z.enum(['config', 'catalog', 'macos', 'windows']).parse(payload.part);
+              const part = z.enum(['config', 'catalog', 'macos', 'linux', 'windows']).parse(payload.part);
               if (part === 'catalog' && !bundle.catalog) throw new Error('此客户端不需要单独的模型目录。');
               const { clipboard } = await import('electron'); clipboard.writeText(part === 'catalog' ? bundle.catalog! : part === 'config' ? bundle.configuration : bundle.scripts[part]); return true;
             }
@@ -177,6 +181,7 @@ else {
     tray = new Tray(icon);
     tray.setToolTip('Model Bridge'); tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开 Model Bridge', click: () => window?.show() }, { label: active.gateway.address, enabled: false }, { type: 'separator' }, { label: '退出', click: () => app.quit() }]));
     tray.on('click', () => window?.show());
+    console.info('Model Bridge desktop ready');
   } catch (error) { dialog.showErrorBox('Model Bridge 启动失败', error instanceof Error ? error.message : 'Unknown error'); quitting = true; await runtime?.close(); app.quit(); }
   });
 }

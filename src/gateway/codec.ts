@@ -190,12 +190,12 @@ export function encodeRequest(protocol: Protocol, request: Canonical, model: str
   return body;
 }
 
-function applyThinking(body: any, protocol: Protocol, request: Canonical, model: string, context?: ReasoningContext) {
+export function applyThinking(body: any, protocol: Protocol, request: Pick<Canonical, 'effort'|'thinking'|'summary'|'maxTokens'>, model: string, context?: ReasoningContext) {
   const effort = request.effort; const provider = context?.provider;
   const kimiCoding = /^k3(?:[.\-]|$)|^kimi-for-coding(?:-highspeed)?$/i.test(model);
   const kimiEffort = effort === 'none' ? 'none' : ['minimal', 'low'].includes(effort ?? '') ? 'low' : ['xhigh', 'max'].includes(effort ?? '') ? 'max' : 'high';
   if (protocol === 'responses') {
-    if (effort || request.summary) body.reasoning = { ...(effort ? { effort } : {}), ...(request.summary ? { summary: request.summary } : {}) };
+    if (effort || request.summary) body.reasoning = { ...body.reasoning, ...(effort ? { effort } : {}), ...(request.summary ? { summary: request.summary } : {}) };
     return;
   }
   if (protocol === 'chat') {

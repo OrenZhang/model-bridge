@@ -22,7 +22,10 @@ it('completes Kimi device login, honors pending polling and refreshes once for c
   let polls = 0; let refreshes = 0;
   const { login, request, values } = setup('kimi', (url, init) => {
     const form = new URLSearchParams(String(init.body));
-    expect(new Headers(init.headers).get('user-agent')).toBe('ModelBridge/0.1.0');
+    expect(new Headers(init.headers).get('user-agent')).toBe('CoSail/0.1.0');
+    expect(new Headers(init.headers).get('x-msh-device-name')).toBe('CoSail');
+    expect(new Headers(init.headers).get('x-msh-platform')).toBe('cosail');
+    expect(new Headers(init.headers).get('x-msh-device-id')).toMatch(/^[a-f0-9-]{36}$/);
     if (url.endsWith('device_authorization')) return json({ device_code: 'private-device', user_code: 'USER', verification_uri_complete: 'https://auth.kimi.com/authorize', interval: 1, expires_in: 600 });
     if (url.endsWith('/me')) return json({ user_id: 'kimi-account', nickname: 'Fixture' });
     if (form.get('grant_type') === 'refresh_token') { refreshes++; expect(form.get('refresh_token')).toBe('private-refresh'); return json({ access_token: 'refreshed', refresh_token: 'rotated', expires_in: 3600 }); }

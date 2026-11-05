@@ -1,5 +1,6 @@
 import { poolCandidates, publicModelRoutes } from './model-pool.js';
 import { z } from 'zod';
+import { modeValues } from '../shared/reasoning-modes.js';
 
 export const ProtocolSchema = z.enum(['responses', 'messages', 'chat']);
 export type Protocol = z.infer<typeof ProtocolSchema>;
@@ -26,7 +27,7 @@ export const ModelSchema = z.object({
 export type Model = z.infer<typeof ModelSchema>;
 export const ConnectionSchema = z.object({
   id: identifier, name: z.string().min(1).max(100),
-  provider: z.enum(['openai', 'kimi', 'minimax', 'anthropic', 'custom']),
+  provider: z.enum(['openai', 'kimi', 'minimax', 'anthropic', 'deepseek', 'custom']),
   auth: z.enum(['api-key', 'chatgpt-device', 'subscription', 'none']).default('api-key'),
   baseUrl: z.string().url().refine(value => {
     const u = new URL(value);
@@ -39,6 +40,7 @@ export const ConnectionSchema = z.object({
   accountEmail: z.string().optional(),
   credentialVersion: z.string().optional(),
   secretRef: z.string().min(1).optional(),
+  reasoningModes: z.record(z.string(),z.enum(modeValues)).default({}),
   proxy: ProxyChoiceSchema.default({ mode: 'inherit' }),
   enabled: z.boolean().default(true), models: z.array(ModelSchema).default([]),
 }).superRefine((connection, ctx) => {
@@ -53,6 +55,7 @@ export const ConnectionSchema = z.object({
 });
 export type Connection = z.infer<typeof ConnectionSchema>;
 export const ConfigSchema = z.object({
+  deviceId:z.string().uuid().optional(),
   version: z.literal(1).default(1), port: z.number().int().min(0).max(65535).default(18765),
   listenHost: z.enum(['127.0.0.1', '0.0.0.0']).default('127.0.0.1'),
   defaultProxy: ProxyChoiceSchema.default({ mode: 'system' }),
@@ -62,7 +65,7 @@ export const ConfigSchema = z.object({
   })).default([]),
   connections: z.array(ConnectionSchema).default([]),
   networkProfiles: z.array(z.object({ id: identifier, name: z.string().min(1).max(100), source: z.enum(['subscription', 'config']), nodes: z.array(z.string()).min(1), selected: z.string(), secretRef: z.string(), updatedAt: z.string() })).default([]),
-  clients: z.array(z.object({ id: identifier, name: z.string().min(1), tokenHash: z.string().regex(/^[a-f0-9]{64}$/) })).default([]),
+  clients: z.array(z.object({ id: identifier, name: z.string().min(1), enabled:z.boolean().default(true), tokenHash: z.string().regex(/^[a-f0-9]{64}$/) })).default([]),
 }).superRefine((config, ctx) => {
   for (const [name, entries] of Object.entries({ connections: config.connections, proxies: config.proxies, networkProfiles: config.networkProfiles, clients: config.clients }))
     if (new Set(entries.map(e => e.id)).size !== entries.length) ctx.addIssue({ code: 'custom', message: `Duplicate ${name} IDs.` });

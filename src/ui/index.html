@@ -14,16 +14,17 @@
       <button data-page="connections" class="active"><span>⇄</span>连接</button>
       <button data-page="models"><span>◇</span>模型</button>
       <button data-page="clients"><span>⌘</span>客户端</button>
+      <button data-page="overview"><span>⇄</span>对外服务</button>
       <button data-page="usage"><span>▥</span>用量</button>
     </nav>
-    <div class="sidebar-bottom"><div class="local-badge"><i></i> 网关运行中</div><button class="plain" data-go="overview">接口与局域网 ↗</button><small>v0.1.0 · ALPHA</small></div>
+    <div class="sidebar-bottom"><div class="local-badge"><i></i> 网关运行中</div><small>v0.1.0 · ALPHA</small></div>
   </aside>
   <main><header><div><h1 id="page-title">总览</h1></div><div id="service-status" class="status"><i></i> 正在连接网关</div></header><div id="content"><div class="empty">正在读取本地服务…</div></div></main>
   <div id="toast" role="status" hidden></div>
   <dialog id="connection-dialog"><form id="connection-form">
     <div class="dialog-title"><div><div class="eyebrow">连接你的模型</div><h2>添加连接</h2></div><button type="button" class="icon-button" data-close="connection-dialog">×</button></div>
 
-    <label>服务商<select name="provider"><option value="openai">ChatGPT / OpenAI</option><option value="kimi">Kimi</option><option value="minimax">MiniMax</option><option value="anthropic">Anthropic</option><option value="custom">自定义服务</option></select></label>
+    <label>服务商<select name="provider"><option value="openai">ChatGPT / OpenAI</option><option value="kimi">Kimi</option><option value="minimax">MiniMax</option><option value="anthropic">Anthropic</option><option value="deepseek">DeepSeek</option><option value="custom">自定义服务</option></select></label>
     <div id="connection-tabs" class="client-tabs" role="tablist" aria-label="添加方式"><button type="button" role="tab" id="source-login" aria-controls="connection-details" aria-selected="true" data-source="login">登录新账号</button><button type="button" role="tab" id="source-reuse" aria-controls="reuse-login" aria-selected="false" data-source="reuse">复用已有登录</button><button type="button" role="tab" id="source-api" aria-controls="connection-details" aria-selected="false" data-source="api">API Key</button></div>
     <div id="reuse-login" role="tabpanel" aria-labelledby="source-reuse" hidden></div>
     <div id="connection-details" role="tabpanel" aria-labelledby="source-login">
@@ -32,6 +33,7 @@
     <div id="login-methods"><div class="field-label">登录方式</div><div class="login-choices"><button type="button" data-login-method="browser"><strong>官方登录</strong><small>浏览器授权，自动连接</small></button><button type="button" data-login-method="device"><strong>设备码登录</strong><small>在授权页面输入设备码</small></button></div></div>
     <div id="subscription-fields" hidden><label>账号区域<select name="region"><option value="cn">中国区</option><option value="global">国际区</option></select></label><p class="hint" id="subscription-note">通过服务商官方授权页面登录，支持独立添加多个订阅账号。授权和模型请求使用同一区域。</p></div>
     <div id="api-fields"><label>认证方式<select id="api-auth"><option value="api-key">API Key</option><option value="none">本地服务（无密钥）</option></select></label><label>API Base URL<input name="baseUrl" type="url" placeholder="https://api.example.com/v1" /></label><label id="api-key-label">API Key<input name="apiKey" type="password" autocomplete="off" placeholder="密钥加密保存在本机" /></label><label>服务支持的接口<select name="protocol"><option value="responses">Responses</option><option value="chat">Chat Completions</option><option value="messages">Messages</option><option value="all">三种接口均支持</option></select></label></div>
+    <details class="network-options" id="reasoning-settings"><summary>推理模式</summary><p class="hint">按模型设置此连接的模式；选中固定模式时覆盖客户端参数。</p><div id="reasoning-models"></div></details>
     <details class="network-options"><summary>网络设置（可选）</summary><p class="hint">只影响此连接的登录、模型发现和请求。通常保持默认；需要时选择自己的订阅节点。</p><label>此连接使用<select name="proxy"></select></label><div class="row"><button type="button" class="plain" data-action="manage-networks">添加 / 管理代理订阅</button><button type="button" class="plain" data-action="add-proxy">手动填写代理地址</button></div><p class="hint">订阅由内置 mihomo 按需运行，不设置系统代理或 TUN。授权网页仍使用系统浏览器自身网络。</p></details>
     <details class="network-options"><summary>手动模型（可选）</summary><label>模型 ID（每行一个）<textarea name="modelIds" rows="3" placeholder="配置或登录成功后自动获取；服务不提供模型目录时再手动填写。"></textarea></label></details>
     <p class="hint">添加连接后，模型会汇总到同一个目录。Codex 和其他客户端通过本地网关调用。</p>
@@ -58,9 +60,9 @@
   </dialog>
   <dialog id="portable-dialog" class="portable-dialog">
     <div class="dialog-title"><h2>复制接入配置</h2><button class="icon-button" data-close="portable-dialog">×</button></div>
-    <div class="portable-network"><label class="toggle"><input id="portable-lan" type="checkbox" />局域网访问</label><select id="portable-address" aria-label="配置中的服务地址"></select></div>
+    <div class="portable-network"><label for="portable-key">访问密钥</label><select id="portable-key" aria-label="导出配置使用的密钥"></select></div><div class="portable-network"><label for="portable-address">服务地址</label><select id="portable-address" aria-label="配置中的服务地址"></select></div>
     <p id="portable-description" class="hint"></p>
-    <div class="portable-network"><label for="portable-platform">目标系统</label><select id="portable-platform"><option value="macos">macOS · 终端</option><option value="windows">Windows · PowerShell</option></select></div>
+    <div class="portable-network"><label for="portable-platform">目标系统</label><select id="portable-platform"><option value="linux">Linux</option><option value="macos">macOS · 终端</option><option value="windows">Windows · PowerShell</option></select></div>
     <p class="hint">复制脚本后粘贴执行，自动备份并合并配置、写入模型目录。需安装 Node.js 18+；保留其他设置和原始登录。</p>
     <details><summary>手动配置说明</summary><p id="portable-instructions" class="portable-instructions"></p></details>
     <details class="portable-code"><summary>查看配置（密钥已隐藏）</summary><pre id="portable-preview"></pre></details>

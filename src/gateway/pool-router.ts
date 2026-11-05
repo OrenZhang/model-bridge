@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { BridgeError, type Protocol } from '../core/config.js';
 import { digest, routeFingerprint, reasoningScope, type ModelRoute } from '../core/model-pool.js';
+import { controlledRequest } from '../shared/reasoning-modes.js';
 import { atomicWrite } from '../core/store.js';
 import { isGatewayReasoning, type ReasoningVault } from './reasoning.js';
 const StateSchema = z.object({ version: z.literal(1), cursor: z.record(z.string(), z.number().int().nonnegative()), bindings: z.record(z.string(), z.object({ connectionId: z.string(), fingerprint: z.string(), updatedAt: z.number() })) });
@@ -23,7 +24,8 @@ function sessionIdentity(input: any, session?: string) {
   const content = typeof first === 'string' ? [{ type: 'text', text: first }] : Array.isArray(first) ? first.map((part: any) => ['text', 'input_text', 'output_text'].includes(part.type) ? { type: 'text', text: part.text } : part) : first;
   return ['first-user', content];
 }
-function supportsRequest(route: ModelRoute, input: any) {
+function supportsRequest(route: ModelRoute, input: any, protocol: Protocol) {
+  try { input = controlledRequest(route.connection,route.model,protocol,input); } catch { return false; }
   const model = route.model;
   if (input.tools?.length && !model.tools) return false;
   const messages = Array.isArray(input.input) ? input.input : input.messages;
@@ -74,14 +76,14 @@ export class PoolRouter {
         // Never send that state to an account chosen as if this were a new chat.
         const history = Array.isArray(input.input) ? input.input : input.messages;
         if (input.previous_response_id || input.conversation || history?.some?.((m: any) => ['assistant', 'tool'].includes(m.role) || ['reasoning', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output'].includes(m.type))) throw new BridgeError(409, 'pool_history_unbound', 'Cannot identify the original account for this conversation. Start a new conversation.');
-        const compatible = candidates.filter(r=>supportsRequest(r,input));
+        const compatible = candidates.filter(r=>supportsRequest(r,input,protocol));
         if (!compatible.length) throw new BridgeError(400,'model_capability_unavailable','No enabled channel supports the requested tools, images or thinking level.');
         const available = compatible.filter(r => (this.cooldown.get(r.connection.id) ?? 0) <= Date.now()).sort((a, b) => a.connection.id.localeCompare(b.connection.id));
         if (!available.length) throw new BridgeError(503, 'pool_accounts_cooling_down', 'All accounts are temporarily unavailable. Retry later.');
         const cursor = this.state.cursor[pool] ?? 0;
         selected = available[cursor % available.length]!;
       }
-      if (!supportsRequest(selected,input)) throw new BridgeError(400,'model_capability_unavailable','The original channel does not support this request. Start a new conversation to select another channel.');
+      if (!supportsRequest(selected,input,protocol)) throw new BridgeError(400,'model_capability_unavailable','The original channel does not support this request. Start a new conversation to select another channel.');
       if ((this.cooldown.get(selected.connection.id) ?? 0) > Date.now()) throw new BridgeError(429, 'pool_account_cooling_down', 'The original account is temporarily unavailable. Retry this conversation later.');
       if (!currentBound) {
         const next = structuredClone(this.state);

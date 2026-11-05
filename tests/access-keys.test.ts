@@ -1,0 +1,20 @@
+import {afterEach,expect,it}from'vitest';import{mkdtemp,rm,readFile}from'node:fs/promises';import os from'node:os';import path from'node:path';
+import{createRuntime}from'../src/core/runtime.js';import{ConfigStore}from'../src/core/store.js';
+const cleanup:(()=>Promise<unknown>)[]=[];afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
+it('isolates access keys, attributes actual usage and revokes one without changing another',async()=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'mb-access-'));cleanup.push(()=>rm(dir,{recursive:true,force:true}));const store=await new ConfigStore(dir).load();await store.save({port:0});
+ const values=new Map<string,string>();const runtime=await createRuntime(dir,{get:async r=>values.get(r),set:async(r,v)=>{values.set(r,v)}},dir);cleanup.push(()=>runtime.close());
+ const a=await runtime.createAccessKey('Linux laptop'),b=await runtime.createAccessKey('Team workstation');const first=await runtime.accessKey(a),second=await runtime.accessKey(b);expect(first).not.toBe(second);
+ const health=async token=>fetch(runtime.gateway.address+'/v1/models',{headers:{authorization:'Bearer '+token}});
+ expect((await health(first)).status).toBe(200);expect((await health(second)).status).toBe(200);
+ await runtime.updateAccessKey(a,{enabled:false});expect((await health(first)).status).toBe(401);expect((await health(second)).status).toBe(200);await expect(runtime.accessKey(a)).rejects.toThrow('停用');
+ await runtime.updateAccessKey(b,{name:'Renamed workstation'});expect(await runtime.accessKey(b)).toBe(second);expect(runtime.store.get().clients.find(c=>c.id===b)!.name).toBe('Renamed workstation');
+ expect(await readFile(path.join(dir,'config.json'),'utf8')).not.toContain(first);expect(await readFile(path.join(dir,'config.json'),'utf8')).not.toContain(second);
+ await expect(runtime.updateAccessKey('codex',{enabled:false})).rejects.toThrow('本机客户端');
+ await runtime.saveConnection({id:'up',name:'Fixture',provider:'custom',auth:'none',baseUrl:'https://upstream.invalid/v1',models:[{id:'m',name:'Model',upstreamId:'m',protocols:['chat']}]});
+ runtime.network.request=async()=>new Response(JSON.stringify({choices:[{message:{role:'assistant',content:'OK'},finish_reason:'stop'}],usage:{prompt_tokens:7,completion_tokens:3}}),{headers:{'content-type':'application/json'}});
+ const post=async(token,session)=>{const r=await fetch(runtime.gateway.address+'/v1/chat/completions',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json','x-model-bridge-session':session},body:JSON.stringify({model:'m',messages:[{role:'user',content:'test'}],stream:false})});expect(r.status).toBe(200);await r.text();};
+ await runtime.updateAccessKey(a,{enabled:true});await post(first,'a-1');await post(first,'a-2');await post(second,'b-1');
+ const records=await runtime.usage.list();expect(records.filter(r=>r.clientId===a)).toHaveLength(2);expect(records.filter(r=>r.clientId===b)).toHaveLength(1);expect(records.every(r=>r.tokens.input===7)).toBe(true);
+ const portable=runtime.clients.portable('codex',runtime.store.get(),runtime.gateway.address,second);expect(portable.configuration).toContain(second);expect(portable.preview).not.toContain(second);expect(portable.scripts.linux).toContain('Linux terminal');
+});

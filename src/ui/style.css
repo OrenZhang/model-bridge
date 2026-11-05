@@ -189,3 +189,4 @@ main{margin-left:135px;padding:20px 16px}
 }
 @media(prefers-reduced-motion:no-preference){button{transition:background .12s,border-color .12s}
 }
+.key-create{display:flex;gap:12px;padding:18px}.key-create input{flex:1;min-width:0}.service-exports{display:flex;gap:12px;align-items:end;padding:18px;flex-wrap:wrap}.service-exports label{flex:1;min-width:220px}.service-exports button{margin-bottom:0}#reasoning-models label{display:grid;grid-template-columns:minmax(150px,1fr) minmax(140px,1fr);align-items:center;gap:12px}#reasoning-settings{margin:16px 0}

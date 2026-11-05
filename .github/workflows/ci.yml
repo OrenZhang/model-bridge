@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -22,11 +22,36 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm test
+      - run: npm test -- --maxWorkers=2
       - run: npm run build
       - name: Verify real Codex with simulated providers
         run: node scripts/validate-codex-providers.mjs --mock-pools
       - name: Check desktop packaging
-        run: npx electron-builder --dir --publish never
+        run: npx electron-builder --dir --${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Install Linux desktop smoke dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gnome-keyring dbus-x11 xvfb libsecret-1-0 libgtk-3-0 libnss3 libgbm1
+      - name: Verify native Linux desktop startup and encrypted vault
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -c '
+            export XDG_CURRENT_DESKTOP=GNOME
+            printf "ci-fixture-password" | gnome-keyring-daemon --unlock --components=secrets
+            xvfb-run -a node scripts/validate-linux-desktop.mjs
+          '
+      - name: Build Linux AppImage and Debian packages
+        if: runner.os == 'Linux'
+        run: npx electron-builder --linux AppImage deb --${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Upload Linux packages
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-bridge-${{ matrix.os }}
+          path: |
+            release/*.AppImage
+            release/*.deb
+          retention-days: 14

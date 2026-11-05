@@ -21,7 +21,7 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 
 服务商添加、账号登录和网络设置集中在“连接”，模型集中在“模型”。模型默认全部对外提供，可在“模型”页取消勾选；隐藏项不会出现在模型接口、Codex 目录及新导出的配置中，直接请求也会被拒绝。同模型多账号一起切换，同步已有模型保留开关。启用统一模型会自动汇总已启用的模型目录，无需再选定某个服务商。首次默认模型从可用模型中选取，之后在客户端选择模型；已打开的客户端可能需要重启。其他 Agent 使用总览中的统一接口地址和访问密钥接入。
 
-**启用**会备份并写入本机客户端配置。旁边的**复制配置**可选择本机或局域网地址，选择 macOS / Windows 后复制执行脚本，也可复制原生配置或导出 ZIP；复制和导出不会改写本机客户端。脚本需 Node.js 18+，在接收端终端 / PowerShell 粘贴执行，自动备份并合并接入字段，保留其他设置及原始登录；Codex 模型目录一并写入。Codex 使用 `config.toml` 与 `codex-models.json` 两个文件，Claude Code 使用 `settings.json`。
+**启用**会备份并写入本机客户端配置。“对外服务”中的**复制配置**可选择独立 Key、本机或局域网地址，选择 macOS / Windows / Linux 后复制执行脚本，也可复制原生配置或导出 ZIP；复制和导出不会改写本机客户端。脚本需 Node.js 18+，在接收端终端 / PowerShell 粘贴执行，自动备份并合并接入字段，保留其他设置及原始登录；Codex 模型目录一并写入。Codex 使用 `config.toml` 与 `codex-models.json` 两个文件，Claude Code 使用 `settings.json`。
 
 所有连接始终经过同一网关。对外只使用原始模型 ID，例如 `gpt-5.6-sol`、`kimi-for-coding`、`MiniMax-M2.7`。完全相同的模型 ID 跨服务商、地址、API Key 和订阅账号合并为一个模型池，不添加连接前缀或区分通道的后缀。新对话按可用通道轮询分发；带工具、图片或 thinking 等级的请求会选择具备对应能力的通道。对话后续消息、thinking 和工具结果固定原通道，原通道失效时返回错误，避免串号。旧的连接路由和池 ID 保留兼容，正常客户端只需使用原始模型名。ChatGPT 订阅自动适配普通客户端的 temperature / token 上限等不受支持参数；该通道不能保证这些参数生效，HTTP 多轮必须携带完整历史。
 
@@ -67,7 +67,7 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 - 跨协议暂不支持 `previous_response_id`、托管会话、结构化输出、音视频、服务端工具、强制指定工具等高级能力。图片只支持已声明的常见图片块。原生协议优先保留服务商字段，但仍受服务商兼容范围限制。
 - 统一模式生成的 Codex 配置关闭内置服务端 Web Search，避免客户端默认发送上游无法处理的工具；普通本地工具调用不受影响，切回原始模式恢复原设置。
 - ChatGPT 设备授权使用 Codex 的登录能力与账号凭据，**不等于 OpenAI Platform API Key**。当前本机 ChatGPT 账号与 OpenAI API Key 通道均已用真实 Codex 验证多轮和工具调用，不能承诺所有订阅、组织策略或未来版本均兼容。
-- Kimi Code / MiniMax Code 订阅 OAuth 已接入；不把 ACP 当成模型 HTTP 接口。当前没有内嵌 ACP Agent 会话，统一调用走官方订阅的模型通道。套餐剩余额度/官方账单未接入，本地统计只覆盖经过本网关的请求。认证边界和实测范围见 [订阅认证说明](docs/provider-auth.md)。
+- Kimi Code / MiniMax Code 订阅 OAuth 已接入；不把 ACP 当成模型 HTTP 接口。当前没有内嵌 ACP Agent 会话，统一调用走官方订阅的模型通道。套餐剩余额度/官方账单未接入，本地统计只覆盖经过本网关的请求。认证边界和实测范围见 [订阅认证说明](docs/provider-auth.md)。连接中的推理模式、独立访问密钥与 CoSail 设备标识见 [连接与服务控制](docs/connection-controls.md)。
 - 未返回的用量记为未知，不从文本猜测 Token 数；费用为配置价格下的估算，不是订阅账单。线上协议必填用量字段可能使用零占位，本机统计保留未知状态。
 - 未提供签名/公证的正式安装包。当前推荐开发者从源码运行；不要把 CI 构建成功当作 Windows 实机验收。
 - 本机账号复用只读取已知 Codex 登录格式；新版 secrets keyring 格式可能需要设备码重新授权。复制登录后与原客户端共用同一授权来源，令牌轮换后可能需要重新登录。
@@ -150,7 +150,7 @@ npm run dev
 
 总览分别提供基础地址、完整地址和访问密钥的复制入口。允许局域网访问后，其他设备用本机实际网卡 IP 替换 `127.0.0.1`；`0.0.0.0` 是监听地址，不是客户端目标地址。同网段设备还需要系统防火墙允许端口。此模式为 HTTP，请只用于可信局域网。
 
-也可在“客户端 → 统一模型 → 复制配置”中直接开启局域网访问并选中网卡地址，配置会自动使用该地址。Codex 配置包中的两个文件放在接收方同一个 Codex 配置目录（默认 `~/.codex`；Windows 为 `%USERPROFILE%\.codex`，或自定义 `CODEX_HOME`）。`model_catalog_json` 使用相对路径，不携带发送方电脑路径。模型目录是导出时的快照；新增模型后需重新复制目录。Claude Code 的 `settings.json` 放在接收方 `~/.claude` 或 `%USERPROFILE%\.claude`，已有文件请合并相关字段。
+也可在“对外服务”页启用局域网访问，创建独立 Key 后复制接入配置并选中网卡地址，配置会自动使用该地址。Codex 配置包中的两个文件放在接收方同一个 Codex 配置目录（默认 `~/.codex`；Windows 为 `%USERPROFILE%\.codex`，或自定义 `CODEX_HOME`）。`model_catalog_json` 使用相对路径，不携带发送方电脑路径。模型目录是导出时的快照；新增模型后需重新复制目录。Claude Code 的 `settings.json` 放在接收方 `~/.claude` 或 `%USERPROFILE%\.claude`，已有文件请合并相关字段。
 
 配置包同时包含 `install-macos.sh` 和 `install-windows.ps1`，无需额外下载 npm 依赖。脚本尊重接收端 `CODEX_HOME` / `CLAUDE_CONFIG_DIR`，备份放在相应配置目录的 `model-bridge-backups/` 下。
 
@@ -167,3 +167,5 @@ npm run dev
 - `backups/`：客户端配置备份。备份可能含原有客户端的凭据，不应上传到 GitHub。
 
 需求、架构与验收计划分别见 [需求范围](docs/requirements.md)、[架构](docs/architecture.md)、[路线图](docs/roadmap.md)。项目独立实现，参考同舟的交互边界，不复制其业务源码。
+
+Linux x64 / ARM64 提供 AppImage、Deb 与接入脚本，构建及运行要求见 [Linux 支持](docs/linux.md)。

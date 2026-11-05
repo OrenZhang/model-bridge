@@ -14,7 +14,7 @@ if (!process.env.MODEL_BRIDGE_GATEWAY_KEY) {
 const runtime = await createRuntime(directory, new EnvironmentSecrets(), os.homedir(), undefined, process.env.MODEL_BRIDGE_CODEX_BINARY);
 const config = runtime.store.get();
 config.clients = config.clients.filter(c => c.id !== 'cli');
-config.clients.push({ id: 'cli', name: 'CLI client', tokenHash: tokenHash(process.env.MODEL_BRIDGE_GATEWAY_KEY) });
+config.clients.push({ id: 'cli', name: 'CLI client', enabled:true, tokenHash: tokenHash(process.env.MODEL_BRIDGE_GATEWAY_KEY) });
 await runtime.store.save(config);
 console.log(`Model Bridge listening on ${runtime.gateway.address}`);
 console.log(`Configuration: ${path.join(directory, 'config.json')}`);

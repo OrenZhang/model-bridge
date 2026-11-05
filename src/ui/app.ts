@@ -1,10 +1,11 @@
+import { modelModeOptions, modeLabels, type ReasoningMode } from '../shared/reasoning-modes.js';
 import { connectionState } from './connection-state.js';
 declare global { interface Window { modelBridge: { call: (operation: string, payload?: unknown) => Promise<any> } } }
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 const escape = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const number = (n: number) => new Intl.NumberFormat('zh-CN', { notation: n >= 100000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(n);
-const providerNames: Record<string, string> = { openai: 'ChatGPT / OpenAI', kimi: 'Kimi', minimax: 'MiniMax', anthropic: 'Anthropic', custom: '自定义服务' };
-const titles: Record<string, string> = { overview: '接口与局域网', connections: '连接', models: '模型', clients: '客户端', usage: '用量统计' };
+const providerNames: Record<string, string> = { openai: 'ChatGPT / OpenAI', kimi: 'Kimi', minimax: 'MiniMax', anthropic: 'Anthropic', deepseek:'DeepSeek', custom: '自定义服务' };
+const titles: Record<string, string> = { overview: '对外服务', connections: '连接', models: '模型', clients: '客户端', usage: '用量统计' };
 let state: any; let page = 'connections'; let days = 7; let editing: any; let activeLogin: string | undefined; let toastTimer: ReturnType<typeof setTimeout>; let refreshing = false;
 const usageFilters: Record<string, string> = {};
 let editingModel: { connectionId: string; modelId: string } | undefined;
@@ -13,6 +14,7 @@ const clientTabs = [{ id: 'codex', name: 'Codex' }, { id: 'claude', name: 'Claud
 let clientTab = 'codex'; let clientBusy = false;
 let connectionSource = 'login'; let connectionSaving = false; let reuseSnapshot = '';
 let loginStarting = false; let loginAttempt = 0;
+let portableKeyId='';
 let portableClient = 'codex'; let portableAddress = ''; let portableRevision = 0;
 
 async function call(operation: string, payload?: unknown) { return window.modelBridge.call(operation, payload); }
@@ -30,7 +32,7 @@ function stats() {
 function endpointCards() {
   const addresses = [state.address, ...(state.lanAddresses ?? [])];
   if (!addresses.includes(selectedAddress)) selectedAddress = state.address;
-  return `<div class="panel endpoint-panel"><div class="endpoint-toolbar"><strong>统一接口</strong><div class="endpoint-controls"><label class="toggle"><input id="lan-access" type="checkbox" ${state.config.listenHost === '0.0.0.0' ? 'checked' : ''} />局域网访问</label><select id="service-address" aria-label="服务地址">${addresses.map((address: string) => `<option value="${escape(address)}">${escape(address)}${address === state.address ? ' · 本机' : ' · 局域网'}</option>`).join('')}</select><button class="plain" data-action="copy-key">复制密钥</button></div></div><div class="table-wrap"><table class="endpoint-table"><thead><tr><th>接口</th><th>客户端 Base URL</th><th>请求路径</th></tr></thead><tbody>${[['responses', 'Responses', '/v1', '/v1/responses'], ['messages', 'Messages', '', '/v1/messages'], ['chat', 'Chat Completions', '/v1', '/v1/chat/completions']].map(([id, name, base, endpoint]) => `<tr><td><strong>${name}</strong></td><td><div class="address-cell"><code>${escape(selectedAddress + base)}</code><button class="copy-button" data-action="copy-address" data-id="${id}" data-kind="base" aria-label="复制 ${name} 基础地址" title="复制基础地址">复制</button></div></td><td><div class="address-cell"><code>${endpoint}</code><button class="copy-button" data-action="copy-address" data-id="${id}" data-kind="endpoint" aria-label="复制 ${name} 完整请求地址" title="复制完整请求地址">复制</button></div></td></tr>`).join('')}</tbody></table></div>${state.config.listenHost === '0.0.0.0' ? '<div class="endpoint-note">监听 0.0.0.0 · 其他设备使用网卡地址和访问密钥连接，系统防火墙需允许该端口。</div>' : ''}</div>`;
+  return `<div class="panel endpoint-panel"><div class="endpoint-toolbar"><strong>统一接口</strong><div class="endpoint-controls"><label class="toggle"><input id="lan-access" type="checkbox" ${state.config.listenHost === '0.0.0.0' ? 'checked' : ''} />局域网访问</label><select id="service-address" aria-label="服务地址">${addresses.map((address: string) => `<option value="${escape(address)}">${escape(address)}${address === state.address ? ' · 本机' : ' · 局域网'}</option>`).join('')}</select></div></div><div class="table-wrap"><table class="endpoint-table"><thead><tr><th>接口</th><th>客户端 Base URL</th><th>请求路径</th></tr></thead><tbody>${[['responses', 'Responses', '/v1', '/v1/responses'], ['messages', 'Messages', '', '/v1/messages'], ['chat', 'Chat Completions', '/v1', '/v1/chat/completions']].map(([id, name, base, endpoint]) => `<tr><td><strong>${name}</strong></td><td><div class="address-cell"><code>${escape(selectedAddress + base)}</code><button class="copy-button" data-action="copy-address" data-id="${id}" data-kind="base" aria-label="复制 ${name} 基础地址" title="复制基础地址">复制</button></div></td><td><div class="address-cell"><code>${endpoint}</code><button class="copy-button" data-action="copy-address" data-id="${id}" data-kind="endpoint" aria-label="复制 ${name} 完整请求地址" title="复制完整请求地址">复制</button></div></td></tr>`).join('')}</tbody></table></div>${state.config.listenHost === '0.0.0.0' ? '<div class="endpoint-note">监听 0.0.0.0 · 其他设备使用网卡地址和访问密钥连接，系统防火墙需允许该端口。</div>' : ''}</div>`;
 }
 function localAccountPanel() {
   return `<div class="section-heading"><h3>本机 Codex 登录</h3><button type="button" class="secondary" data-action="detect-local">重新检测</button></div><div class="panel local-accounts">${(state.localAccounts ?? []).map((account: any) => `<div class="local-account"><div><strong>${escape(account.email ?? (account.kind === 'api-key' ? 'OpenAI API Key 登录' : '未检测到可复用账号'))}</strong>${account.plan ? `<span class="tag">${escape(account.plan)}</span>` : ''}<p>当前连接：${escape(account.provider === 'model_bridge' ? 'Model Bridge' : account.provider === 'openai' ? '官方 OpenAI / ChatGPT' : account.provider)}${account.model ? ' · ' + escape(account.model) : ''}</p><small>${escape(account.directory)}</small>${account.message ? `<p class="hint">${escape(account.message)}</p>` : ''}</div><button class="${account.imported ? 'secondary' : 'primary'}" type="button" data-action="import-local" data-id="${escape(account.id)}" ${!account.canImport || account.imported ? 'disabled' : ''}>${account.imported ? '已接入账号' : '复用此账号'}</button></div>`).join('') || '<div class="empty">正在检测本机 Codex 配置与登录状态…</div>'}</div><p class="hint">保存独立登录副本，作为一个连接添加。若登录失效，可在连接中重新授权。</p>`;
@@ -66,6 +68,16 @@ function showPool(id: string) {
   $('#pool-content').innerHTML = `<p class="hint">${escape(providerNames[entry.provider])} · ${entry.exposedAccounts ?? entry.members.length} / ${entry.members.length} 个账号对外${entry.members.length > 1 ? ' · 新对话轮流分配' : ''}</p><div class="pool-members">${entry.members.map((member: any) => `<div class="pool-member"><div><strong>${escape(member.name)}</strong><small>${escape(member.model)}</small></div><button class="plain" data-action="model-edit" data-id="${escape(member.connectionId)}" data-model="${escape(member.modelId)}">模型设置</button></div>`).join('')}</div><p class="hint">同一对话的消息、thinking 和工具结果始终回到原账号。原账号不可用时会提示处理。</p>`;
   $<HTMLDialogElement>('#pool-dialog').showModal();
 }
+function accessKeyPanel(){
+ const keys=state.accessKeys??[];
+ return `<div class="section-heading"><h3>访问密钥</h3><span class="hint">近 ${days} 天 · 本机客户端密钥单独管理</span></div><div class="panel"><form id="access-key-form" class="key-create"><input name="keyName" aria-label="密钥名称" placeholder="例如：我的 Linux、同事的电脑" required maxlength="100"/><button class="primary" type="submit">创建独立 Key</button></form>${keys.length?`<div class="table-wrap"><table><thead><tr><th>名称</th><th>状态</th><th>请求数</th><th>输入 / 输出 Token</th><th>操作</th></tr></thead><tbody>${keys.map((k:any)=>`<tr><td><strong>${escape(k.name)}</strong></td><td>${k.enabled?'启用':'停用'}</td><td>${number(k.requests)}</td><td>${number(k.inputTokens)} / ${number(k.outputTokens)}</td><td><button class="plain" data-action="access-copy" data-id="${escape(k.id)}" ${k.enabled?'':'disabled'}>复制</button><button class="plain" data-action="access-usage" data-id="${escape(k.id)}">用量</button><button class="plain" data-action="access-rename" data-id="${escape(k.id)}">改名</button><button class="plain" data-action="access-toggle" data-id="${escape(k.id)}">${k.enabled?'停用':'启用'}</button></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">创建独立 Key 后，可复制配置给其他设备使用。</div>'}</div>`;
+}
+function renderReasoningSettings(){
+ const models=editing?.models??[];const provider=$<HTMLSelectElement>('select[name="provider"]').value;
+ const connection={provider,auth:editing?.auth??'api-key'};
+ const available=models.filter((m:any)=>modelModeOptions(connection,m).length>2);
+ $('#reasoning-models').innerHTML=available.length?available.map((m:any)=>{const modes=modelModeOptions(connection,m);const value=editing?.reasoningModes?.[m.upstreamId]??'client';return `<label>${escape(m.name)}<select data-reasoning-model="${escape(m.upstreamId)}" aria-label="${escape(m.name)} 推理模式">${modes.includes(value as ReasoningMode)?'':`<option value="${escape(value)}" disabled selected>原设置已不受支持，请重新选择</option>`}${modes.map(mode=>`<option value="${mode}" ${mode===value?'selected':''}>${modeLabels[mode]}</option>`).join('')}</select></label>`;}).join(''):'<p class="hint">获取模型后显示其支持的模式；未声明推理能力的模型保持客户端或服务商默认。</p>';
+}
 function clientsPage() {
   const client = clientTabs.find(item => item.id === clientTab)!;
   const status = state.clientStatuses?.[clientTab];
@@ -75,7 +87,7 @@ function clientsPage() {
   const providers = state.config.connections.filter((c: any) => c.enabled).length;
   const disabled = clientBusy || !status || status.mode === 'error';
   const tabs = `<div class="client-tabs" role="tablist" aria-label="客户端">${clientTabs.map(item => `<button id="tab-${item.id}" role="tab" aria-selected="${clientTab === item.id}" aria-controls="client-tab-panel" tabindex="${clientTab === item.id ? 0 : -1}" class="${clientTab === item.id ? 'active' : ''}" data-client-tab="${item.id}">${item.name}</button>`).join('')}</div>`;
-  return `${tabs}<section id="client-tab-panel" role="tabpanel" aria-labelledby="tab-${clientTab}"><div class="mode-heading"><p>选择 ${client.name} 的使用模式</p><button class="plain" data-go="connections">管理服务商 →</button></div><div class="panel mode-list"><div class="mode-row ${unified ? 'is-current' : ''}"><div class="mode-symbol">⇄</div><div class="mode-description"><h3>统一模型</h3><p>连接本地网关，使用所有已接入服务商的模型。</p><small>${providers} 个连接 · ${available.length} 个模型 · 客户端无需单独登录服务商</small></div><div class="mode-actions"><button class="secondary" data-action="portable-config" ${!available.length ? 'disabled' : ''}>复制配置</button>${unified ? '<span class="using-service">使用中</span>' : `<button class="primary" data-action="use-gateway" ${disabled || !available.length ? 'disabled' : ''}>启用</button>`}</div></div><div class="mode-row ${original ? 'is-current' : ''}"><div class="mode-symbol native-mode">↶</div><div class="mode-description"><h3>原始认证</h3><p>使用客户端原来的连接和账号认证。</p><small>保留原有登录，可随时切回</small></div>${original ? '<span class="using-service">使用中</span>' : `<button class="secondary" data-action="use-original" ${disabled || !status?.canRestore ? 'disabled' : ''}>切换</button>`}</div></div>${status?.error ? `<p class="hint service-error">${escape(status.error)}</p>` : ''}${!available.length ? '<p class="switch-note">添加服务商后即可启用统一模型，模型会自动汇总。</p>' : '<p class="switch-note">统一模式下直接在客户端选择模型。切换模式后，已打开的客户端可能需要重启。</p>'}${unified && !status.canRestore ? '<p class="hint service-error">未找到可用的原始配置备份，暂时无法切回。</p>' : ''}</section>`;
+  return `${tabs}<section id="client-tab-panel" role="tabpanel" aria-labelledby="tab-${clientTab}"><div class="mode-heading"><p>选择 ${client.name} 的使用模式</p><button class="plain" data-go="connections">管理服务商 →</button></div><div class="panel mode-list"><div class="mode-row ${unified ? 'is-current' : ''}"><div class="mode-symbol">⇄</div><div class="mode-description"><h3>统一模型</h3><p>连接本地网关，使用所有已接入服务商的模型。</p><small>${providers} 个连接 · ${available.length} 个模型 · 客户端无需单独登录服务商</small></div><div class="mode-actions">${unified ? '<span class="using-service">使用中</span>' : `<button class="primary" data-action="use-gateway" ${disabled || !available.length ? 'disabled' : ''}>启用</button>`}</div></div><div class="mode-row ${original ? 'is-current' : ''}"><div class="mode-symbol native-mode">↶</div><div class="mode-description"><h3>原始认证</h3><p>使用客户端原来的连接和账号认证。</p><small>保留原有登录，可随时切回</small></div>${original ? '<span class="using-service">使用中</span>' : `<button class="secondary" data-action="use-original" ${disabled || !status?.canRestore ? 'disabled' : ''}>切换</button>`}</div></div>${status?.error ? `<p class="hint service-error">${escape(status.error)}</p>` : ''}${!available.length ? '<p class="switch-note">添加服务商后即可启用统一模型，模型会自动汇总。</p>' : '<p class="switch-note">统一模式下直接在客户端选择模型。切换模式后，已打开的客户端可能需要重启。</p>'}${unified && !status.canRestore ? '<p class="hint service-error">未找到可用的原始配置备份，暂时无法切回。</p>' : ''}</section>`;
 }
 async function updatePortableConfig(preferLan = false) {
   const revision = ++portableRevision;
@@ -84,13 +96,16 @@ async function updatePortableConfig(preferLan = false) {
   const selector = $<HTMLSelectElement>('#portable-address');
   selector.innerHTML = addresses.map((address: string) => `<option value="${escape(address)}">${escape(address)} · ${address === state.address ? '本机' : '局域网'}</option>`).join('');
   selector.value = portableAddress;
-  $<HTMLInputElement>('#portable-lan').checked = state.config.listenHost === '0.0.0.0';
+  const keys=(state.accessKeys??[]).filter((k:any)=>k.enabled);
+  if(!keys.some((k:any)=>k.id===portableKeyId))portableKeyId=keys[0]?.id??'';
+  $<HTMLSelectElement>('#portable-key').innerHTML=keys.map((k:any)=>`<option value="${escape(k.id)}">${escape(k.name)}</option>`).join('');
+  $<HTMLSelectElement>('#portable-key').value=portableKeyId;
   $('#portable-description').textContent = portableAddress === state.address ? '当前地址仅本机可用。分享给其他设备前，请开启局域网访问并选择网卡地址。' : '其他设备使用此网卡地址连接；两台电脑需网络互通，并允许此端口通过防火墙。';
   const buttons = [...document.querySelectorAll<HTMLButtonElement>('#portable-dialog [data-portable]')];
   $('#portable-feedback').textContent = '';
   buttons.forEach(button => button.disabled = true); $('#portable-preview').textContent = '正在生成…';
   try {
-    const result = await call('client.portable-preview', { client: portableClient, address: portableAddress });
+    const result = await call('client.portable-preview', { client: portableClient, address: portableAddress, keyId:portableKeyId });
     if (revision !== portableRevision) return;
     $('#portable-preview').textContent = result.preview;
     $('#portable-instructions').textContent = result.instructions;
@@ -103,23 +118,24 @@ function render() {
   $('#page-title').textContent = titles[page]!;
   $('#service-status').innerHTML = '<i></i> 本地网关运行中';
   let html = '';
-  if (page === 'overview') html = `<p class="intro">所有模型，一个入口。在熟悉的客户端里自由选择。</p>${endpointCards()}${stats()}<div class="section-heading"><div><h3>我的连接 <span class="tag">${state.config.connections.length}</span></h3><p>连接各自管理，模型自动汇总</p></div><button class="primary" data-action="add-connection">＋ 添加连接</button></div>${connections()}<div class="section-heading"><h3>可用模型 <span class="tag">${activeModels().length}</span></h3><button class="plain" data-go="models">查看模型目录 →</button></div>${modelsTable()}`;
+  if (page === 'overview') html = `<p class="intro">为其他设备提供模型服务，按独立密钥统计用量。</p>${endpointCards()}${accessKeyPanel()}<div class="section-heading"><h3>复制接入配置</h3><span class="hint">使用下方选中的独立 Key</span></div><div class="panel service-exports"><label>配置使用的密钥<select id="service-key">${(state.accessKeys??[]).filter((k:any)=>k.enabled).map((k:any)=>`<option value="${escape(k.id)}" ${k.id===portableKeyId?'selected':''}>${escape(k.name)}</option>`).join('')}</select></label>${clientTabs.map(c=>`<button class="secondary" data-action="portable-config" data-id="${c.id}" ${(state.accessKeys??[]).some((k:any)=>k.enabled)&&state.modelCatalog?.length?'':'disabled'}>${c.name} 配置与脚本</button>`).join('')}</div>`;
   if (page === 'connections') html = `<div class="row intro connection-toolbar"><p>${state.config.connections.length} 个连接 · ${new Set(state.config.connections.map((c: any) => c.provider)).size} 个服务商</p><div class="toolbar-actions"><button class="secondary" data-action="manage-networks">代理订阅</button><button class="primary" data-action="add-connection">＋ 添加连接</button></div></div>${connections()}<p class="hint">同模型多账号分摊不同对话，后续消息与工具调用保持在原账号。</p>`;
   if (page === 'models') html = `<p class="intro">这些模型通过同一个网关提供服务。客户端根据各自能力加载模型目录。</p>${modelsTable()}<p class="hint">模型列表不等于调用权限。首次接入请验证实际调用；自定义模型的上下文和能力需要与服务商说明核对。</p>`;
   if (page === 'clients') html = clientsPage();
   if (page === 'usage') {
     const daily: { date: string; count: number }[] = state.daily;
     const max = Math.max(1, ...daily.map(x => x.count));
-    html = `<div class="row intro"><p>调用元数据保存在本机，不记录提示词和回复正文。</p><div><select id="days" class="compact"><option value="1">最近 1 天</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option></select></div></div>${stats()}${state.usageWriteFailed ? '<div class="notice">部分统计写入失败，请检查本地磁盘空间和目录权限。</div>' : ''}<div class="panel"><div class="chart">${daily.map(x => `<div class="bar-group"><small>${x.count || ''}</small><div class="bar" style="height:${Math.max(2, x.count / max * 80)}px"></div><small>${x.date.slice(5)}</small></div>`).join('')}</div></div><div class="section-heading"><h3>请求明细</h3><button class="secondary" data-action="export">导出 CSV</button></div><div class="panel table-wrap">${state.records.length ? `<table><thead><tr><th>时间</th><th>客户端 / 模型</th><th>输入 / 输出</th><th>耗时</th><th>结果</th></tr></thead><tbody>${state.records.map((r: any) => `<tr><td>${escape(new Date(r.startedAt).toLocaleString())}</td><td><strong>${escape(r.clientId)}</strong><small>${escape(r.model)}</small></td><td>${r.tokens.input ?? '未知'} / ${r.tokens.output ?? '未知'}</td><td>${r.durationMs} ms</td><td><span class="tag ${r.status === 'success' ? '' : 'error'}">${r.status === 'success' ? '成功' : r.status === 'cancelled' ? '已取消' : '失败'}</span></td></tr>`).join('')}</tbody></table>` : '<div class="empty">暂无调用记录。接入客户端并发送请求后，这里会自动更新。</div>'}</div><p class="hint">明细显示最近 200 条；导出包含最近 90 天。套餐总额度查询尚未接入，当前仅统计经过本地网关的请求。</p>`;
+    html = `<div class="row intro"><p>调用元数据保存在本机，不记录提示词和回复正文。</p><div><select id="days" class="compact"><option value="1">最近 1 天</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option></select></div></div>${stats()}${state.usageWriteFailed ? '<div class="notice">部分统计写入失败，请检查本地磁盘空间和目录权限。</div>' : ''}<div class="panel"><div class="chart">${daily.map(x => `<div class="bar-group"><small>${x.count || ''}</small><div class="bar" style="height:${Math.max(2, x.count / max * 80)}px"></div><small>${x.date.slice(5)}</small></div>`).join('')}</div></div><div class="section-heading"><h3>请求明细</h3><button class="secondary" data-action="export">导出 CSV</button></div><div class="panel table-wrap">${state.records.length ? `<table><thead><tr><th>时间</th><th>客户端 / 模型</th><th>输入 / 输出</th><th>耗时</th><th>结果</th></tr></thead><tbody>${state.records.map((r: any) => `<tr><td>${escape(new Date(r.startedAt).toLocaleString())}</td><td><strong>${escape(state.config.clients.find((c:any)=>c.id===r.clientId)?.name??r.clientId)}</strong><small>${escape(r.model)}</small></td><td>${r.tokens.input ?? '未知'} / ${r.tokens.output ?? '未知'}</td><td>${r.durationMs} ms</td><td><span class="tag ${r.status === 'success' ? '' : 'error'}">${r.status === 'success' ? '成功' : r.status === 'cancelled' ? '已取消' : '失败'}</span></td></tr>`).join('')}</tbody></table>` : '<div class="empty">暂无调用记录。接入客户端并发送请求后，这里会自动更新。</div>'}</div><p class="hint">明细显示最近 200 条；导出包含最近 90 天。套餐总额度查询尚未接入，当前仅统计经过本地网关的请求。</p>`;
   }
   $('#content').innerHTML = html;
   if (page === 'overview') {
     const access = $<HTMLInputElement>('#lan-access'); access.onchange = () => void action('service.lan', { enabled: access.checked }, '服务监听设置已更新').catch(() => refresh());
+    const keySelect=$<HTMLSelectElement>('#service-key');if(keySelect){if(![...keySelect.options].some(o=>o.value===portableKeyId))portableKeyId=keySelect.options[0]?.value??'';keySelect.value=portableKeyId;keySelect.onchange=()=>{portableKeyId=keySelect.value;};}
     const addresses = $<HTMLSelectElement>('#service-address'); addresses.value = selectedAddress; addresses.onchange = () => { selectedAddress = addresses.value; render(); };
   }
   if (page === 'usage') {
     const filters = document.createElement('div'); filters.className = 'usage-filters';
-    filters.innerHTML = Object.entries({ clientId: '客户端', provider: '服务商', connectionId: '账号', model: '模型' }).map(([key, name]) => `<label>${name}<select data-filter="${key}"><option value="">全部</option>${state.usageOptions[key].map((v: string) => `<option value="${escape(v)}">${escape(key === 'provider' ? providerNames[v] ?? v : key === 'connectionId' ? state.config.connections.find((c: any) => c.id === v)?.name ?? v : v)}</option>`).join('')}</select></label>`).join('');
+    filters.innerHTML = Object.entries({ clientId: '客户端', provider: '服务商', connectionId: '账号', model: '模型' }).map(([key, name]) => `<label>${name}<select data-filter="${key}"><option value="">全部</option>${state.usageOptions[key].map((v: string) => `<option value="${escape(v)}">${escape(key === 'clientId' ? state.config.clients.find((c:any)=>c.id===v)?.name??v : key === 'provider' ? providerNames[v] ?? v : key === 'connectionId' ? state.config.connections.find((c: any) => c.id === v)?.name ?? v : v)}</option>`).join('')}</select></label>`).join('');
     $('#content .intro').after(filters);
     filters.querySelectorAll<HTMLSelectElement>('select').forEach(select => { select.value = usageFilters[select.dataset.filter!] ?? ''; select.onchange = () => { usageFilters[select.dataset.filter!] = select.value; void refresh(); }; });
   }
@@ -208,16 +224,18 @@ function openConnection(id?: string, provider?: string) {
     setConnectionSource(['chatgpt-device', 'subscription'].includes(editing.auth) ? 'login' : 'api');
     $('#connection-manage-actions').innerHTML = `<label class="toggle"><input type="checkbox" name="enabled" ${editing.enabled ? 'checked' : ''} />使用此连接</label>${['chatgpt-device', 'subscription'].includes(editing.auth) ? '<button type="button" class="secondary" data-action="login" data-id="' + escape(editing.id) + '">重新登录</button>' : ''}<button type="button" class="secondary" data-action="discover" data-id="${escape(editing.id)}">同步模型</button><button type="button" class="plain danger" data-action="delete" data-id="${escape(editing.id)}">移除连接</button>`;
   } else { if (provider) field('provider').value = provider; providerChanged(); }
+  renderReasoningSettings();
   $<HTMLDialogElement>('#connection-dialog').showModal(); updateReuse();
 }
 function providerChanged() {
   const form = $<HTMLFormElement>('#connection-form'); const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const provider = field('provider').value;
-  const defaults: Record<string, [string, string]> = { openai: ['https://api.openai.com/v1', 'responses'], kimi: ['https://api.kimi.com/coding/v1', 'all'], minimax: ['https://api.minimax.io/anthropic/v1', 'messages'], anthropic: ['https://api.anthropic.com/v1', 'messages'], custom: ['', 'chat'] };
+  const defaults: Record<string, [string, string]> = { openai: ['https://api.openai.com/v1', 'responses'], kimi: ['https://api.kimi.com/coding/v1', 'all'], minimax: ['https://api.minimax.io/anthropic/v1', 'messages'], anthropic: ['https://api.anthropic.com/v1', 'messages'], deepseek:['https://api.deepseek.com/v1','chat'], custom: ['', 'chat'] };
   field('baseUrl').value = defaults[provider]![0]; field('protocol').value = defaults[provider]![1];
   field('auth').value = provider === 'openai' ? 'chatgpt-browser' : ['kimi', 'minimax'].includes(provider) ? 'subscription' : 'api-key';
   $<HTMLSelectElement>('#api-auth').value = 'api-key';
   setConnectionSource(['openai', 'kimi', 'minimax'].includes(provider) ? 'login' : 'api');
+  renderReasoningSettings();
 }
 document.addEventListener('keydown', event => {
   const target = (event.target as HTMLElement).closest<HTMLElement>('[role="tab"]');
@@ -261,9 +279,9 @@ document.addEventListener('click', event => {
       if (operation === 'discover') await action('connection.discover', { id }, '模型目录已同步');
       if (operation === 'login') { $<HTMLDialogElement>('#connection-dialog').close(); await showLogin(id!); }
       if (operation === 'delete' && confirm('移除此连接及其模型？此账号的已有对话将不可继续。')) { await action('connection.delete', { id }, '连接已移除'); $<HTMLDialogElement>('#connection-dialog').close(); }
-      if (operation === 'portable-config') { portableClient = clientTab; portableAddress = ''; $<HTMLSelectElement>('#portable-platform').value = navigator.userAgent.includes('Windows') ? 'windows' : 'macos'; $<HTMLDialogElement>('#portable-dialog').showModal(); await updatePortableConfig(); }
+      if (operation === 'portable-config') { portableClient = id??'codex'; portableAddress = selectedAddress; $<HTMLSelectElement>('#portable-platform').value = navigator.userAgent.includes('Windows') ? 'windows' : navigator.userAgent.includes('Linux') ? 'linux' : 'macos'; $<HTMLDialogElement>('#portable-dialog').showModal(); await updatePortableConfig(); }
       if (target.dataset.portable) {
-        const payload = { client: portableClient, address: portableAddress };
+        const payload = { client: portableClient, address: portableAddress, keyId:portableKeyId };
         if (target.dataset.portable === 'export') { if (await call('client.export-portable', payload)) toast('配置包已导出'); }
         else { $('#portable-feedback').textContent = ''; await call('client.copy-portable', { ...payload, part: target.dataset.portable === 'script' ? $<HTMLSelectElement>('#portable-platform').value : target.dataset.portable }); $('#portable-feedback').textContent = target.dataset.portable === 'script' ? '执行脚本已复制，可在目标电脑粘贴运行。' : '配置已复制。'; toast('已复制，配置包含本网关访问密钥'); }
       }
@@ -274,6 +292,10 @@ document.addEventListener('click', event => {
           await action(operation === 'use-gateway' ? 'client.gateway' : 'client.original', { client }, operation === 'use-gateway' ? '已启用统一模型，可在客户端选择所有已接入模型' : '已切回原始认证');
         } finally { clientBusy = false; render(); }
       }
+      if(operation==='access-copy')await action('access.copy',{id},'访问密钥已复制');
+      if(operation==='access-toggle'){const key=state.accessKeys.find((k:any)=>k.id===id);await action('access.update',{id,enabled:!key.enabled},key.enabled?'密钥已停用':'密钥已启用');}
+      if(operation==='access-usage'){usageFilters.clientId=id!;page='usage';document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',(b as HTMLElement).dataset.page==='usage'));await refresh();render();}
+      if(operation==='access-rename'){const key=state.accessKeys.find((k:any)=>k.id===id);const name=prompt('密钥名称',key.name);if(name?.trim())await action('access.update',{id,name:name.trim()},'名称已更新');}
       if (operation === 'copy-key') await action('client.copy-key', {}, '访问密钥已复制');
       if (operation === 'copy-address') await action('client.copy-address', { protocol: id, kind: target.dataset.kind, address: selectedAddress }, '地址已复制');
       if (operation === 'export') await action('usage.export', {}, '导出操作已完成');
@@ -291,7 +313,7 @@ $<HTMLFormElement>('#connection-form').onsubmit = event => {
     const id = editing?.id ?? `account-${crypto.randomUUID().slice(0, 8)}`; const loginMethod = field('auth') === 'chatgpt-browser' ? 'browser' : 'device'; const auth = field('auth').startsWith('chatgpt-') ? 'chatgpt-device' : field('auth'); const protocol = field('protocol');
     const existing = new Map((editing?.models ?? []).map((m: any) => [m.upstreamId, m]));
     const models = [...new Set(field('modelIds').split('\n').map(x => x.trim()).filter(Boolean))].map(model => ({ ...(existing.get(model) as object ?? { id: model, name: model, upstreamId: model }), protocols: auth === 'subscription' ? [field('provider') === 'minimax' ? 'messages' : 'chat'] : auth === 'chatgpt-device' ? ['responses'] : protocol === 'all' ? ['responses', 'messages', 'chat'] : [protocol] }));
-    try { await action('connection.save', { connection: { ...editing, id, name: field('name'), provider: field('provider'), auth, loginMethod, region: field('region') || 'cn', enabled: editing ? form.get('enabled') === 'on' : true, baseUrl: auth === 'chatgpt-device' ? 'https://chatgpt.com/backend-api/codex' : auth === 'subscription' ? field('provider') === 'kimi' ? (field('region') === 'global' ? 'https://api.kimi.ai/coding/v1' : 'https://api.kimi.com/coding/v1') : (field('region') === 'global' ? 'https://agent.minimax.io/mavis/api/v1/llm/v1' : 'https://agent.minimax.cn/mavis/api/v1/llm/v1') : field('baseUrl'), proxy: proxyChoice(field('proxy')), models }, apiKey: auth === 'api-key' ? field('apiKey') : undefined }, '连接已保存'); $<HTMLDialogElement>('#connection-dialog').close(); if (['chatgpt-device', 'subscription'].includes(auth) && !editing) { await showLogin(id!); } } catch { /* shown */ } finally { connectionSaving = false; $<HTMLButtonElement>('#save-connection').disabled = false; }
+    try { await action('connection.save', { connection: { ...editing, id, name: field('name'), provider: field('provider'), auth, loginMethod, region: field('region') || 'cn', enabled: editing ? form.get('enabled') === 'on' : true, baseUrl: auth === 'chatgpt-device' ? 'https://chatgpt.com/backend-api/codex' : auth === 'subscription' ? field('provider') === 'kimi' ? (field('region') === 'global' ? 'https://api.kimi.ai/coding/v1' : 'https://api.kimi.com/coding/v1') : (field('region') === 'global' ? 'https://agent.minimax.io/mavis/api/v1/llm/v1' : 'https://agent.minimax.cn/mavis/api/v1/llm/v1') : field('baseUrl'), proxy: proxyChoice(field('proxy')), reasoningModes:Object.fromEntries([...document.querySelectorAll<HTMLSelectElement>('[data-reasoning-model]')].filter(e=>e.value!=='client').map(e=>[e.dataset.reasoningModel!,e.value])), models }, apiKey: auth === 'api-key' ? field('apiKey') : undefined }, '连接已保存'); $<HTMLDialogElement>('#connection-dialog').close(); if (['chatgpt-device', 'subscription'].includes(auth) && !editing) { await showLogin(id!); } } catch { /* shown */ } finally { connectionSaving = false; $<HTMLButtonElement>('#save-connection').disabled = false; }
   })();
 };
 $<HTMLFormElement>('#proxy-form').onsubmit = event => {
@@ -326,16 +348,15 @@ $<HTMLDialogElement>('#login-dialog').addEventListener('close', () => {
   if (pending) void action('device.cancel', {id}).catch(() => {});
 });
 $<HTMLSelectElement>('#portable-address').onchange = event => { portableAddress = (event.target as HTMLSelectElement).value; void updatePortableConfig(); };
-$<HTMLInputElement>('#portable-lan').onchange = event => {
-  const input = event.target as HTMLInputElement; input.disabled = true;
-  void action('service.lan', { enabled: input.checked }).then(() => updatePortableConfig(true)).catch(() => { input.checked = state.config.listenHost === '0.0.0.0'; }).finally(() => input.disabled = false);
-};
+$<HTMLSelectElement>('#portable-key').onchange=event=>{portableKeyId=(event.target as HTMLSelectElement).value;void updatePortableConfig();};
 document.addEventListener('change', event => {
   const input = event.target as HTMLInputElement; if (!input.matches('input[data-model-exposure]')) return;
   const enabled = input.checked; input.disabled = true;
   void action('model.exposure', {id:input.dataset.modelExposure,enabled}, enabled ? '模型已对外提供' : '模型已停止对外提供').catch(() => { input.checked = !enabled; }).finally(() => { input.disabled = false; });
 });
-const navIcons: Record<string, string> = {"connections": "<path d=\"M7 3v4m6-4v4M5 7h10v3a5 5 0 0 1-5 5v3M3 7h14\"/>", "models": "<path d=\"m10 2 8 5-8 5-8-5 8-5Zm-8 9 8 5 8-5M2 15l8 5 8-5\"/>", "clients": "<rect x=\"2\" y=\"3\" width=\"16\" height=\"14\" rx=\"2\"/><path d=\"m5 7 3 3-3 3m6 0h4\"/>", "usage": "<path d=\"M3 17V9m7 8V3m7 14v-6\"/>"};
+const navIcons: Record<string, string> = {overview:'<path d="M2 10h16M10 2v16"/><circle cx="10" cy="10" r="8"/>',"connections": "<path d=\"M7 3v4m6-4v4M5 7h10v3a5 5 0 0 1-5 5v3M3 7h14\"/>", "models": "<path d=\"m10 2 8 5-8 5-8-5 8-5Zm-8 9 8 5 8-5M2 15l8 5 8-5\"/>", "clients": "<rect x=\"2\" y=\"3\" width=\"16\" height=\"14\" rx=\"2\"/><path d=\"m5 7 3 3-3 3m6 0h4\"/>", "usage": "<path d=\"M3 17V9m7 8V3m7 14v-6\"/>"};
 document.querySelectorAll<HTMLButtonElement>('nav [data-page]').forEach(button => { button.querySelector('span')!.innerHTML = `<svg viewBox="0 0 20 22" aria-hidden="true">${navIcons[button.dataset.page!] ?? ''}</svg>`; });
 void refresh(); setInterval(() => { if (!clientBusy && !connectionSaving && !document.querySelector('select:focus') && !window.getSelection()?.toString()) void refresh(); }, 4000);
 export {};
+
+document.addEventListener('submit',event=>{if((event.target as HTMLElement).id!=='access-key-form')return;event.preventDefault();const form=event.target as HTMLFormElement;const button=form.querySelector('button')!;button.disabled=true;const name=String(new FormData(form).get('keyName')??'').trim();void action('access.create',{name},'独立密钥已创建').then(id=>{portableKeyId=id;render();}).catch(()=>{}).finally(()=>{button.disabled=false;});});

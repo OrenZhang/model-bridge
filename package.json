@@ -17,7 +17,8 @@
     "check": "tsc --noEmit && tsc -p tsconfig.ui.json",
     "test": "vitest run",
     "package": "npm run build && electron-builder --publish never",
-    "pretest": "node scripts/build-installer.mjs"
+    "pretest": "node scripts/build-installer.mjs",
+    "package:linux": "npm run build && electron-builder --linux AppImage deb --publish never"
   },
   "dependencies": {
     "@napi-rs/keyring": "^2.1.2",
@@ -70,6 +71,34 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "Development",
+      "executableName": "model-bridge"
+    },
+    "deb": {
+      "maintainer": "OrenZhang"
     }
+  },
+  "homepage": "https://github.com/OrenZhang/model-bridge",
+  "author": {
+    "name": "OrenZhang"
   }
 }

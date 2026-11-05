@@ -1,12 +1,13 @@
 import { PoolRouter } from '../gateway/pool-router.js';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { ConfigStore, type SecretStore } from './store.js';
 import { ConnectionSchema, ModelSchema, BridgeError, type Connection } from './config.js';
 import { Network, type SystemProxyResolver } from './network.js';
 import { UsageStore } from './usage.js';
 import { startGateway, tokenHash } from '../gateway/server.js';
+import { coSailHeaders } from '../auth/host-identity.js';
 import { kimiSubscriptionModel } from '../auth/kimi-models.js';
 import { minimaxPresetModels } from '../auth/provider-models.js';
 import { ProviderLogin } from '../auth/provider-login.js';
@@ -19,6 +20,7 @@ import { loadReasoningVault } from './reasoning-key.js';
 
 export async function createRuntime(directory: string, secrets: SecretStore, home: string, systemProxy?: SystemProxyResolver, codexExecutable?: string) {
   const store = await new ConfigStore(directory).load();
+  if(!store.get().deviceId)await store.update(config=>{config.deviceId=randomUUID();});
   // Migrate identity hints from our own isolated helper cache before publishing
   // pooled models. This does not read or modify the user's Codex directory.
   for (const connection of store.get().connections.filter(c => c.auth === 'chatgpt-device' && (!c.accountId || !c.accountEmail))) {
@@ -55,7 +57,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     const previous = subscriptions.get(connection.id);
     if (previous && previous.signature !== signature) { previous.login.close(); subscriptions.delete(connection.id); }
     if (!subscriptions.has(connection.id)) {
-      const helper = new ProviderLogin(connection, network, secrets);
+      const helper = new ProviderLogin(connection, network, secrets, undefined, coSailHeaders(store.get().deviceId!,connection.provider==='kimi'));
       helper.on('authorized', state => {
         if (state.phase === 'authenticated') {
           connectionChecks.delete(connection.id);
@@ -123,9 +125,25 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     const config = store.get();
     const existing = config.clients.find(c => c.id === id);
     if (!existing || existing.tokenHash !== tokenHash(token)) {
-      await store.update(current => { current.clients = current.clients.filter(c => c.id !== id); current.clients.push({ id, name: id === 'claude' ? 'Claude Code' : id === 'codex' ? 'Codex' : 'Other agents', tokenHash: tokenHash(token!) }); });
+      await store.update(current => { current.clients = current.clients.filter(c => c.id !== id); current.clients.push({ id, enabled:true, name: id === 'claude' ? 'Claude Code' : id === 'codex' ? 'Codex' : 'Other agents', tokenHash: tokenHash(token!) }); });
     }
     return token;
+  }
+  async function accessKey(id:string) {
+    const client=store.get().clients.find(c=>c.id===id&&c.enabled);
+    if(!client)throw new Error('访问密钥不存在或已停用。');
+    const token=await secrets.get(`client:${id}`);if(!token||tokenHash(token)!==client.tokenHash)throw new Error('访问密钥无法读取，请重新创建。');
+    return token;
+  }
+  async function createAccessKey(name:string) {
+    const id=`access-${randomBytes(6).toString('hex')}`;const token=`mb_${randomBytes(32).toString('base64url')}`;
+    if(!secrets.set)throw new Error('凭据库不可写。');
+    await secrets.set(`client:${id}`,token);
+    await store.update(config=>{config.clients.push({id,name,enabled:true,tokenHash:tokenHash(token)});});return id;
+  }
+  async function updateAccessKey(id:string,update:{name?:string;enabled?:boolean}) {
+    if(['codex','claude','generic'].includes(id))throw new Error('本机客户端密钥由应用管理。');
+    await store.update(config=>{const client=config.clients.find(c=>c.id===id);if(!client)throw new Error('访问密钥不存在。');Object.assign(client,update);});
   }
   async function saveConnection(raw: unknown, apiKey?: string, autoDiscover = false) {
     const connection = ConnectionSchema.parse(raw);
@@ -164,7 +182,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       const key = connection.auth === 'subscription' ? (await subscription(connection).credentials()).token : connection.secretRef ? await secrets.get(connection.secretRef) : undefined;
       const headers: Record<string, string> = { accept: 'application/json' };
       if (key) { headers.authorization = `Bearer ${key}`; if (connection.auth !== 'subscription') headers['x-api-key'] = key; headers['anthropic-version'] = '2023-06-01'; }
-      headers['user-agent'] = 'ModelBridge/0.1.0';
+      Object.assign(headers,coSailHeaders(store.get().deviceId!,connection.provider==='kimi'));
       const response = await network.request(connection, connection.baseUrl.replace(/\/+$/, '') + '/models', { headers, signal: AbortSignal.timeout(15000) });
       if (!response.ok) {
         await response.body?.cancel();
@@ -175,7 +193,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       } else {
         const data = await response.json() as any; const list = data.data ?? data.models;
         if (!Array.isArray(list)) throw new Error('服务商没有返回可识别的模型目录，可手动添加模型 ID。');
-        found = connection.auth === 'subscription' && connection.provider === 'kimi' ? list.map(kimiSubscriptionModel).filter(Boolean) : list.map((m: any) => ({ id: m.id ?? m.name, name: m.display_name ?? m.id ?? m.name, ...(connection.provider === 'kimi' ? { protocols: m.protocol === 'response' ? ['responses'] : m.protocol === 'anthropic' ? ['messages'] : ['chat'], images: m.modalities?.input?.includes('image') === true, tools: m.supports_tool_use !== false, contextWindow: Number(m.limit?.context ?? m.context_length) || 128000 } : {}) }));
+        found = connection.auth === 'subscription' && connection.provider === 'kimi' ? list.map(kimiSubscriptionModel).filter(Boolean) : list.map((m: any) => ({ id: m.id ?? m.name, name: m.display_name ?? m.id ?? m.name, ...(connection.provider === 'deepseek' && ['deepseek-flash','deepseek-v4-pro'].includes(m.id) ? {protocols:['chat'],reasoning:['none','low','high','max']} : {}), ...(connection.provider === 'kimi' ? { protocols: m.protocol === 'response' ? ['responses'] : m.protocol === 'anthropic' ? ['messages'] : ['chat'], images: m.modalities?.input?.includes('image') === true, tools: m.supports_tool_use !== false, contextWindow: Number(m.limit?.context ?? m.context_length) || 128000 } : {}) }));
       }
     }
     found = found.filter(m => typeof m.id === 'string' && m.id.length > 0).slice(0, 300);
@@ -216,7 +234,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     if (subscription(connection).state.phase === 'authenticated' && connection.provider === 'minimax' && !connection.models.length) scheduleDiscovery(connection.id);
   }));
   let changingListener = false;
-  return { store, network, usage, clients, get gateway() { return gateway; }, ensureClient, saveConnection, discover, scheduleDiscovery, localAccounts, managed,
+  return { store, network, usage, clients, get gateway() { return gateway; }, ensureClient, accessKey, createAccessKey, updateAccessKey, saveConnection, discover, scheduleDiscovery, localAccounts, managed,
     async setLanAccess(enabled: boolean) {
       if (changingListener || gateway.activeRequests() || discoveryTasks.size) throw new Error('正在处理请求，请完成后再更改服务监听设置。');
       changingListener = true; const previous = store.get().listenHost;

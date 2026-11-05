@@ -25,7 +25,7 @@ export interface PortableClientConfiguration {
   preview: string;
   catalog?: string;
   instructions: string;
-  scripts: { macos: string; windows: string };
+  scripts: { macos: string; linux: string; windows: string };
   files: Record<string, string>;
 }
 const claudeManagedKeys = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL', 'ANTHROPIC_API_KEY'];
@@ -87,9 +87,9 @@ export class ClientConfiguration {
       ? 'Codex 需要 config.toml 和 codex-models.json，建议直接导出配置包。\n将两个文件放到接收端 ~/.codex（Windows：%USERPROFILE%\\.codex，或自定义 CODEX_HOME）。已有配置请合并同名字段并保留其他设置，重启 Codex 后即可选择模型。'
       : '将 settings.json 的 env 字段合并到接收端 Claude Code 用户设置（默认 ~/.claude/settings.json 或 Windows %USERPROFILE%\\.claude\\settings.json）。保留其他设置，移除冲突的 env.ANTHROPIC_API_KEY。重新启动 Claude Code 后使用该网关。';
     const scripts = portableScripts({ client, configuration, ...(catalog ? { catalog } : {}) });
-    const readme = `Model Bridge 客户端接入\n\n网关地址：${base}\n\n推荐方式：macOS 在终端执行 install-macos.sh；Windows 在 PowerShell 中粘贴 install-windows.ps1 的内容。需要 Node.js 18+（https://nodejs.org），脚本自带解析器，不下载依赖。自动备份原配置并合并接入字段，保留其他设置和原始登录。支持 CODEX_HOME / CLAUDE_CONFIG_DIR。\n\n手动配置：\n${instructions}\n\n配置包含本网关访问密钥，只交给获准访问网关的人，不包含服务商 API Key 或原始登录凭据。网关电脑必须保持运行；局域网连接需要开启局域网监听并允许端口通过防火墙。0.0.0.0 是监听地址，客户端使用这里已填写的实际 IP。\n\n模型目录为导出时快照，服务商或模型发生变化后请重新导出。已有客户端文件请先备份；直接复制原始配置文件时需自行合并；执行脚本会自动备份并合并。\n`;
+    const readme = `Model Bridge 客户端接入\n\n网关地址：${base}\n\n推荐方式：macOS 在终端执行 install-macos.sh；Linux 执行 install-linux.sh；Windows 在 PowerShell 中粘贴 install-windows.ps1 的内容。需要 Node.js 18+（https://nodejs.org），脚本自带解析器，不下载依赖。自动备份原配置并合并接入字段，保留其他设置和原始登录。支持 CODEX_HOME / CLAUDE_CONFIG_DIR。\n\n手动配置：\n${instructions}\n\n配置包含本网关访问密钥，只交给获准访问网关的人，不包含服务商 API Key 或原始登录凭据。网关电脑必须保持运行；局域网连接需要开启局域网监听并允许端口通过防火墙。0.0.0.0 是监听地址，客户端使用这里已填写的实际 IP。\n\n模型目录为导出时快照，服务商或模型发生变化后请重新导出。已有客户端文件请先备份；直接复制原始配置文件时需自行合并；执行脚本会自动备份并合并。\n`;
     return { client, address: base, filename, configuration, preview: configuration.split(token).join('<local gateway key>'), ...(catalog ? { catalog } : {}), instructions, scripts,
-      files: { [filename]: configuration, ...(catalog ? { 'codex-models.json': catalog } : {}), 'README.txt': readme, 'install-macos.sh': scripts.macos, 'install-windows.ps1': scripts.windows } };
+      files: { [filename]: configuration, ...(catalog ? { 'codex-models.json': catalog } : {}), 'README.txt': readme, 'install-macos.sh': scripts.macos, 'install-linux.sh':scripts.linux, 'install-windows.ps1': scripts.windows } };
   }
   private file(client: ClientName) { return client === 'codex' ? path.join(this.codexHome, 'config.toml') : path.join(this.home, '.claude', 'settings.json'); }
   private serialize<T>(client: ClientName, change: () => Promise<T>): Promise<T> {
