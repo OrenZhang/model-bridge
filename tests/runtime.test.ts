@@ -35,3 +35,16 @@ it('keeps the current listener available if saving a LAN setting fails', async (
   expect(runtime.store.get().listenHost).toBe('127.0.0.1');
   expect((await fetch(address + '/healthz')).status).toBe(200);
 });
+
+it('keeps the previous API credential active when saving its replacement configuration fails', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'mb-key-replacement-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  await atomicWrite(path.join(directory, 'config.json'), JSON.stringify({ port: 0 }));
+  const values = new Map<string,string>();
+  const runtime = await createRuntime(directory, {get:async ref=>values.get(ref),set:async(ref,value)=>{values.set(ref,value);}}, directory); cleanup.push(()=>runtime.close());
+  const raw={id:'provider',name:'Provider',provider:'custom',baseUrl:'https://upstream.invalid/v1'};
+  const old=await runtime.saveConnection(raw,'original-key');
+  vi.spyOn(runtime.store,'update').mockRejectedValueOnce(new Error('disk full'));
+  await expect(runtime.saveConnection({...old},'replacement-key')).rejects.toThrow('disk full');
+  expect(runtime.store.get().connections[0]!.secretRef).toBe(old.secretRef);
+  expect(values.get(old.secretRef!)).toBe('original-key');
+});

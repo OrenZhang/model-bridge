@@ -9,30 +9,36 @@
 </head>
 <body>
   <aside class="sidebar">
-    <div class="brand"><img class="brand-app-icon" src="../../assets/icon-256.png" alt="" /><div>Model Bridge<small>LOCAL MODEL GATEWAY</small></div></div>
-    <nav>
-      <button data-page="overview" class="active"><span>◫</span>总览</button>
-      <button data-page="connections"><span>⇄</span>账号与连接</button>
-      <button data-page="models"><span>◇</span>模型目录</button>
-      <button data-page="clients"><span>⌘</span>客户端模式</button>
-      <button data-page="usage"><span>▥</span>用量统计</button>
+    <div class="brand"><img class="brand-app-icon" src="../../assets/icon-256.png" alt="" /><div>Model Bridge</div></div>
+    <nav aria-label="主导航">
+      <button data-page="connections" class="active"><span>⇄</span>连接</button>
+      <button data-page="models"><span>◇</span>模型</button>
+      <button data-page="clients"><span>⌘</span>客户端</button>
+      <button data-page="usage"><span>▥</span>用量</button>
     </nav>
-    <div class="sidebar-bottom"><div class="local-badge"><i></i> 本地网关 · 自由连接</div><p>账号留在本地<br>模型在你的工具里选择</p><small>v0.1.0 · ALPHA</small></div>
+    <div class="sidebar-bottom"><div class="local-badge"><i></i> 网关运行中</div><button class="plain" data-go="overview">接口与局域网 ↗</button><small>v0.1.0 · ALPHA</small></div>
   </aside>
-  <main><header><div><div class="eyebrow">你的模型工作台</div><h1 id="page-title">总览</h1></div><div id="service-status" class="status"><i></i> 正在连接网关</div></header><div id="content"><div class="empty">正在读取本地服务…</div></div></main>
+  <main><header><div><h1 id="page-title">总览</h1></div><div id="service-status" class="status"><i></i> 正在连接网关</div></header><div id="content"><div class="empty">正在读取本地服务…</div></div></main>
   <div id="toast" role="status" hidden></div>
   <dialog id="connection-dialog"><form id="connection-form">
-    <div class="dialog-title"><div><div class="eyebrow">连接你的模型</div><h2>添加账号或服务</h2></div><button type="button" class="icon-button" data-close="connection-dialog">×</button></div>
-    <label>显示名称<input name="name" placeholder="例如：我的 Kimi 账号" required maxlength="100" /></label>
-    <div class="form-grid"><label>服务商<select name="provider"><option value="openai">ChatGPT / OpenAI</option><option value="kimi">Kimi</option><option value="minimax">MiniMax</option><option value="anthropic">Anthropic</option><option value="custom">自定义服务</option></select></label><label>接入方式<select name="auth"><option value="chatgpt-device">ChatGPT 设备码登录</option><option value="api-key">API Key</option><option value="none">本地服务（无密钥）</option></select></label></div>
-    <div id="api-fields"><label>API Base URL<input name="baseUrl" type="url" placeholder="https://api.example.com/v1" /></label><label>API Key<input name="apiKey" type="password" autocomplete="off" placeholder="密钥加密保存在本机" /></label><label>服务支持的接口<select name="protocol"><option value="responses">Responses</option><option value="chat">Chat Completions</option><option value="messages">Messages</option><option value="all">三种接口均支持</option></select></label></div>
+    <div class="dialog-title"><div><div class="eyebrow">连接你的模型</div><h2>添加连接</h2></div><button type="button" class="icon-button" data-close="connection-dialog">×</button></div>
+
+    <label>服务商<select name="provider"><option value="openai">ChatGPT / OpenAI</option><option value="kimi">Kimi</option><option value="minimax">MiniMax</option><option value="anthropic">Anthropic</option><option value="custom">自定义服务</option></select></label>
+    <div id="connection-tabs" class="client-tabs" role="tablist" aria-label="添加方式"><button type="button" role="tab" id="source-login" aria-controls="connection-details" aria-selected="true" data-source="login">登录新账号</button><button type="button" role="tab" id="source-reuse" aria-controls="reuse-login" aria-selected="false" data-source="reuse">复用已有登录</button><button type="button" role="tab" id="source-api" aria-controls="connection-details" aria-selected="false" data-source="api">API Key</button></div>
+    <div id="reuse-login" role="tabpanel" aria-labelledby="source-reuse" hidden></div>
+    <div id="connection-details" role="tabpanel" aria-labelledby="source-login">
+    <label>连接名称<input name="name" placeholder="例如：个人账号、工作账号" required maxlength="100" /></label>
+    <select name="auth" hidden aria-label="认证类型"><option value="chatgpt-browser">ChatGPT 官方登录</option><option value="chatgpt-device">ChatGPT 设备码登录</option><option value="api-key">API Key</option><option value="none">本地服务</option></select>
+    <div id="login-methods"><div class="field-label">登录方式</div><div class="login-choices"><button type="button" data-login-method="browser"><strong>官方登录</strong><small>浏览器授权，自动连接</small></button><button type="button" data-login-method="device"><strong>设备码登录</strong><small>在授权页面输入设备码</small></button></div></div>
+    <div id="api-fields"><label>认证方式<select id="api-auth"><option value="api-key">API Key</option><option value="none">本地服务（无密钥）</option></select></label><label>API Base URL<input name="baseUrl" type="url" placeholder="https://api.example.com/v1" /></label><label id="api-key-label">API Key<input name="apiKey" type="password" autocomplete="off" placeholder="密钥加密保存在本机" /></label><label>服务支持的接口<select name="protocol"><option value="responses">Responses</option><option value="chat">Chat Completions</option><option value="messages">Messages</option><option value="all">三种接口均支持</option></select></label></div>
     <details class="network-options"><summary>网络设置（可选）</summary><p class="hint">只影响此连接的登录、模型发现和请求。通常保持默认；需要时选择自己的订阅节点。</p><label>此连接使用<select name="proxy"></select></label><div class="row"><button type="button" class="plain" data-action="manage-networks">添加 / 管理代理订阅</button><button type="button" class="plain" data-action="add-proxy">手动填写代理地址</button></div><p class="hint">订阅由内置 mihomo 按需运行，不设置系统代理或 TUN。授权网页仍使用系统浏览器自身网络。</p></details>
-    <label>模型 ID（可选，每行一个）<textarea name="modelIds" rows="3" placeholder="配置或登录成功后自动获取；服务不提供模型目录时再手动填写。"></textarea></label>
+    <details class="network-options"><summary>手动模型（可选）</summary><label>模型 ID（每行一个）<textarea name="modelIds" rows="3" placeholder="配置或登录成功后自动获取；服务不提供模型目录时再手动填写。"></textarea></label></details>
     <p class="hint">添加连接后，模型会汇总到同一个目录。Codex 和其他客户端通过本地网关调用。</p>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="connection-dialog">取消</button><button type="submit" class="primary">保存连接</button></div>
+    <div id="connection-manage-actions" class="manage-actions" hidden></div><div class="dialog-actions"><button type="button" class="secondary" data-close="connection-dialog">取消</button><button id="save-connection" type="submit" class="primary">保存连接</button></div></div>
   </form></dialog>
+  <dialog id="pool-dialog"><div class="dialog-title"><h2 id="pool-title">模型账号</h2><button type="button" class="icon-button" data-close="pool-dialog" aria-label="关闭">×</button></div><div id="pool-content"></div></dialog>
   <dialog id="proxy-dialog"><form id="proxy-form"><div class="dialog-title"><h2>添加网络代理</h2><button type="button" class="icon-button" data-close="proxy-dialog">×</button></div><label>名称<input name="name" required placeholder="例如：工作代理" /></label><label>代理地址<input name="url" required placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080" /></label><div class="form-grid"><label>用户名（可选）<input name="username" autocomplete="off" /></label><label>密码（可选）<input name="password" type="password" autocomplete="off" /></label></div><p class="hint">指定代理不可用时会明确报错，不会自动改为直连。</p><div class="dialog-actions"><button type="button" class="secondary" data-close="proxy-dialog">取消</button><button class="primary" type="submit">保存代理</button></div></form></dialog>
-  <dialog id="login-dialog"><div class="dialog-title"><div><div class="eyebrow">CHATGPT</div><h2>设备码登录</h2></div><button class="icon-button" data-close="login-dialog">×</button></div><div id="login-content"></div><div class="dialog-actions"><button class="secondary" id="cancel-login">取消登录</button><button class="primary" id="open-login">打开授权页面</button></div></dialog>
+  <dialog id="login-dialog"><div class="dialog-title"><div><div class="eyebrow">CHATGPT</div><h2 id="login-title">ChatGPT 登录</h2></div><button class="icon-button" data-close="login-dialog">×</button></div><div id="login-content"></div><div class="dialog-actions"><button class="secondary" id="cancel-login">取消登录</button><button class="primary" id="open-login">打开授权页面</button></div></dialog>
   <dialog id="model-dialog"><form id="model-form">
     <div class="dialog-title"><h2>模型设置</h2><button type="button" class="icon-button" data-close="model-dialog">×</button></div>
     <label>显示名称<input name="name" required maxlength="200" /></label>

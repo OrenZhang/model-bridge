@@ -1,3 +1,4 @@
+import { poolCandidates } from './model-pool.js';
 import { z } from 'zod';
 
 export const ProtocolSchema = z.enum(['responses', 'messages', 'chat']);
@@ -31,6 +32,10 @@ export const ConnectionSchema = z.object({
     return !u.username && !u.password && !u.search && !u.hash &&
       (u.protocol === 'https:' || (u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)));
   }, 'Use HTTPS, or HTTP on loopback; do not include credentials, query parameters or fragments.'),
+  loginMethod: z.enum(['device', 'browser']).default('device'),
+  accountId: z.string().min(1).optional(),
+  accountEmail: z.string().optional(),
+  credentialVersion: z.string().optional(),
   secretRef: z.string().min(1).optional(),
   proxy: ProxyChoiceSchema.default({ mode: 'inherit' }),
   enabled: z.boolean().default(true), models: z.array(ModelSchema).default([]),
@@ -65,6 +70,8 @@ export type Config = z.infer<typeof ConfigSchema>;
 export const emptyConfig = (): Config => ConfigSchema.parse({});
 export const routeId = (connection: Connection, model: Model) => `${connection.id}/${model.id}`;
 export function resolveRoute(config: Config, id: string) {
+  const pooled = poolCandidates(config, id);
+  if (pooled?.length) return structuredClone(pooled[0]!);
   for (const connection of config.connections) {
     if (!connection.enabled) continue;
     const model = connection.models.find(m => m.enabled && routeId(connection, m) === id);

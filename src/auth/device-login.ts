@@ -7,7 +7,7 @@ import { BridgeError, type Connection } from '../core/config.js';
 import type { Network } from '../core/network.js';
 import { codexBinary } from './codex-binary.js';
 
-export interface LoginState { phase: 'idle' | 'starting' | 'waiting' | 'authenticated' | 'error' | 'cancelled'; verificationUrl?: string; userCode?: string; account?: string; error?: string; }
+export interface LoginState { phase: 'idle' | 'starting' | 'waiting' | 'authenticated' | 'error' | 'cancelled'; method?: 'device' | 'browser'; verificationUrl?: string; userCode?: string; account?: string; accountId?: string; error?: string; }
 export class DeviceLogin extends EventEmitter {
   private child?: ChildProcessWithoutNullStreams;
   private seq = 0;
@@ -73,43 +73,53 @@ export class DeviceLogin extends EventEmitter {
   async login() {
     if (['starting', 'waiting'].includes(this.state.phase)) return this.state;
     const generation = this.generation;
-    this.publish({ phase: 'starting' });
+    const method = this.connection.loginMethod ?? 'device';
+    this.publish({ phase: 'starting', method });
     try {
       await this.start();
-      const result = await this.rpc('account/login/start', { type: 'chatgptDeviceCode' });
+      const result = await this.rpc('account/login/start', { type: method === 'browser' ? 'chatgpt' : 'chatgptDeviceCode' });
       if (generation !== this.generation) return this.state;
-      const url = new URL(result.verificationUrl);
-      if (url.protocol !== 'https:' || !['auth.openai.com', 'chatgpt.com'].includes(url.hostname) || url.username || url.password || url.port || typeof result.userCode !== 'string' || typeof result.loginId !== 'string')
+      const url = new URL(method === 'browser' ? result.authUrl : result.verificationUrl);
+      if (url.protocol !== 'https:' || !['auth.openai.com', 'chatgpt.com'].includes(url.hostname) || url.username || url.password || url.port || (method === 'device' && typeof result.userCode !== 'string') || typeof result.loginId !== 'string')
         throw new Error('Unexpected device login response.');
       this.loginId = result.loginId;
-      this.publish({ phase: 'waiting', verificationUrl: url.href, userCode: result.userCode });
-      this.deadline = setTimeout(() => { void this.cancel().finally(() => this.publish({ phase: 'error', error: 'The device code expired. Start device login again.' })); }, 10 * 60000);
+      this.publish({ phase: 'waiting', method, verificationUrl: url.href, ...(method === 'device' ? { userCode: result.userCode } : {}) });
+      this.deadline = setTimeout(() => { void this.cancel().finally(() => this.publish({ phase: 'error', error: 'Login expired. Start authorization again.' })); }, 10 * 60000);
       const early = this.completedEarly.get(this.loginId!); this.completedEarly.clear();
       if (early) await this.complete(early);
-    } catch { if (this.state.phase !== 'cancelled' && generation === this.generation) this.publish({ phase: 'error', error: 'Could not start device login. Check the bundled Codex helper and this account’s proxy configuration.' }); }
+    } catch { if (this.state.phase !== 'cancelled' && generation === this.generation) this.publish({ phase: 'error', error: 'Could not start ChatGPT login. Check the bundled Codex helper and this account’s proxy configuration.' }); }
     return this.state;
   }
   private async complete(result: any) {
     const generation = this.generation;
     clearTimeout(this.deadline); this.loginId = undefined;
-    if (!result.success) { this.publish({ phase: 'error', error: 'Device authorization was declined or expired.' }); return; }
+    if (!result.success) { this.publish({ phase: 'error', error: 'Authorization was declined or expired.' }); return; }
     try {
       const { account } = await this.rpc('account/read', { refreshToken: false });
       if (generation !== this.generation) return;
       if (!account || account.type !== 'chatgpt') throw new Error('Not a ChatGPT account.');
-      this.publish({ phase: 'authenticated', account: account.email ?? 'ChatGPT' });
+      const auth = JSON.parse(await readFile(path.join(this.home, 'auth.json'), 'utf8'));
+      const accountId = auth.tokens?.account_id;
+      if (typeof accountId !== 'string') throw new Error('Missing account identity.');
+      if (generation !== this.generation) return;
+      this.publish({ phase: 'authenticated', account: account.email ?? 'ChatGPT', accountId, method: this.connection.loginMethod });
     } catch { if (generation === this.generation) this.publish({ phase: 'error', error: 'Authorization completed but the account could not be verified.' }); }
   }
   async credentials() {
+    const generation = this.generation;
     try {
       await this.start();
       const { account } = await this.rpc('account/read', { refreshToken: true });
       if (!account || account.type !== 'chatgpt') throw new Error();
       const auth = JSON.parse(await readFile(path.join(this.home, 'auth.json'), 'utf8'));
       if (typeof auth.tokens?.access_token !== 'string' || typeof auth.tokens?.account_id !== 'string') throw new Error();
-      this.publish({ phase: 'authenticated', account: account.email ?? 'ChatGPT' });
-      return { token: auth.tokens.access_token as string, accountId: auth.tokens.account_id as string };
-    } catch { throw new BridgeError(401, 'chatgpt_login_required', 'Complete ChatGPT device login for this account.'); }
+      if (generation !== this.generation) throw new Error('Authentication was cancelled.');
+      this.publish({ phase: 'authenticated', account: account.email ?? 'ChatGPT', accountId: auth.tokens.account_id });
+      return { token: auth.tokens.access_token as string, accountId: auth.tokens.account_id as string, ...(typeof account.email === 'string' ? { email: account.email } : {}) };
+    } catch {
+      if (generation === this.generation) this.publish({ phase: 'error', error: '账号登录已失效，请重新登录此账号。' });
+      throw new BridgeError(401, 'chatgpt_login_required', 'Complete ChatGPT login for this account.');
+    }
   }
   async catalog() { await this.start(); return this.rpc('model/list', { includeHidden: false }); }
   async cancel() {

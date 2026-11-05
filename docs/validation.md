@@ -144,3 +144,13 @@ try {
 运行真实服务会消耗对应服务商额度。脚本每条路由最多转发 12 个 Responses 请求，每轮等待上限 120 秒；用量、请求状态、工具执行和 reasoning 回放次数写入报告，密钥不写入报告。
 
 脚本当前始终检查 Kimi、MiniMax 两项，没有单服务 `--provider` 参数。只配置 Kimi 时，Kimi 可以为 `passed`，MiniMax 会为 `blocked`，总退出码仍为 1；必须读取各项 `status` 判断具体结果。仅两项都通过才返回退出码 0。模拟验证报告带 `mockUpstream: true` 和 `validationKind: real-codex-simulated-upstream`；真实验证报告带 `mockUpstream: false` 和 `real-codex-live-gateway`，两种结果不得混用。
+
+## 2026-11-05：登录方式、紧凑界面与模型池
+
+- 官方 Codex helper 0.144.1 的真实浏览器授权启动返回 `auth.openai.com`，无设备码；设备登录启动返回官方 URL 与设备码。均在隔离目录取消，不改写用户现有 Codex 登录，不保存测试账号连接。完整用户授权没有在这次自动验证中代替用户完成。
+- `device-login.test.ts` 验证两种 RPC、允许的官方 URL、登录完成后验证账号、独立目录及取消隔离。`login-runtime.test.ts` 验证浏览器流程串行，设备码流程独立。
+- `model-pool.test.ts` 验证 20 个并发新会话严格交替、归属续接、重启恢复、不落盘原始提示词/会话 ID、账号身份/API Key 改变时拒绝、限流冷却、客户端隔离及 thinking 原账号恢复。`pool-gateway.test.ts` 通过真实 HTTP 验证 a → b → a 的工具回传与实际账号用量。
+- `node scripts/validate-codex-providers.mjs --mock-pools` 使用真实 Codex 和真实网关，为 Kimi Chat、MiniMax Messages 各配置两个模拟账号，客户端只看到一个模型池；两家各三轮、三次工具、五次成功请求，thinking 历史完整续接。这项检查纳入 Windows/macOS CI。它不表示调用了两家真实服务，本次没有重复消耗线上模型额度。
+- 使用实际构建的界面验证添加账号的三种入口、设备码展示、复用入口、模型去重、账号详情及配置复制；界面测试数据为本地模拟，桌面空状态另行检查。
+
+`runtime.test.ts` 还验证更换 API Key 时配置写入失败，旧引用与旧密钥保持可用。

@@ -1,15 +1,16 @@
-import { routeId, type Config } from './config.js';
+import { catalogRoutes } from './model-pool.js';
+import { type Config } from './config.js';
 
 const instructions = 'You are a coding assistant. Follow the user and developer instructions. Inspect relevant files before changing them. Use the provided tools and report results accurately.';
 export function models(config: Config) {
-  return config.connections.filter(c => c.enabled).flatMap(connection => connection.models.filter(m => m.enabled).map(model => ({ connection, model, id: routeId(connection, model) })));
+  return catalogRoutes(config);
 }
 export function openaiCatalog(config: Config) {
-  return { object: 'list', data: models(config).map(({ connection, model, id }) => ({ id, object: 'model', created: 0, owned_by: connection.provider, display_name: `${connection.name} · ${model.name}` })) };
+  return { object: 'list', data: models(config).map(({ connection, model, id, displayName }) => ({ id, object: 'model', created: 0, owned_by: connection.provider, display_name: displayName })) };
 }
 export function codexCatalog(config: Config) {
-  return { models: models(config).filter(({ model }) => model.tools).map(({ connection, model, id }, priority) => ({
-    slug: id, display_name: `${connection.name} · ${model.name}`, description: `Via ${connection.name}`,
+  return { models: models(config).filter(({ model }) => model.tools).map(({ connection, model, id, displayName }, priority) => ({
+    slug: id, display_name: displayName, description: `Via ${connection.name}`,
     default_reasoning_level: model.reasoning[0] ?? null,
     supported_reasoning_levels: model.reasoning.map(effort => ({ effort, description: effort })),
     shell_type: 'shell_command', visibility: 'list', supported_in_api: true, priority,
@@ -25,6 +26,6 @@ export function codexCatalog(config: Config) {
   })) };
 }
 export function anthropicCatalog(config: Config) {
-  const data = models(config).map(({ connection, model, id }) => ({ id, type: 'model', display_name: `${connection.name} · ${model.name}`, created_at: '1970-01-01T00:00:00Z' }));
+  const data = models(config).map(({ connection, model, id, displayName }) => ({ id, type: 'model', display_name: displayName, created_at: '1970-01-01T00:00:00Z' }));
   return { data, has_more: false, first_id: data[0]?.id ?? null, last_id: data.at(-1)?.id ?? null };
 }

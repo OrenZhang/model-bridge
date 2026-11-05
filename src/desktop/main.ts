@@ -1,3 +1,4 @@
+import { catalogRoutes } from '../core/model-pool.js';
 import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
@@ -46,7 +47,8 @@ else {
             const records = await active.usage.list(days);
             const config = active.store.get(); const address = active.gateway.address;
             const [codex, claude] = await Promise.all(['codex', 'claude'].map(client => active.clients.status(client as 'codex' | 'claude', config, address)));
-            return { config, address, clientStatuses: { codex, claude }, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...usageView(records, filters, days), usageWriteFailed: active.usageWriteFailed() };
+            const modelCatalog = catalogRoutes(config).map(entry => ({ id: entry.id, name: entry.model.name, provider: entry.connection.provider, tools: entry.model.tools, members: entry.members.map(r => ({ connectionId: r.connection.id, modelId: r.model.id, name: r.connection.name, model: r.model.upstreamId })) }));
+            return { config, address, modelCatalog, clientStatuses: { codex, claude }, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...usageView(records, filters, days), usageWriteFailed: active.usageWriteFailed() };
           }
           case 'connection.save': return active.saveConnection(payload.connection, payload.apiKey ? z.string().max(20000).parse(payload.apiKey) : undefined, payload.autoDiscover !== false);
           case 'connection.discover': return active.discover(z.string().parse(payload.id));
@@ -56,7 +58,11 @@ else {
             if (existing?.auth === 'chatgpt-device') await active.loginFor(id).logout();
             const updated = await active.store.update(current => { current.connections = current.connections.filter(c => c.id !== id); }); await active.clients.updateCatalog(updated); return true;
           }
-          case 'device.login': return active.loginFor(z.string().parse(payload.id)).login();
+          case 'device.login': {
+            const state = await active.startLogin(z.string().parse(payload.id));
+            if (state.phase === 'waiting' && state.method === 'browser' && state.verificationUrl) await shell.openExternal(state.verificationUrl);
+            return state;
+          }
           case 'device.cancel': return active.loginFor(z.string().parse(payload.id)).cancel();
           case 'device.open': { const url = active.loginFor(z.string().parse(payload.id)).state.verificationUrl; if (url) await shell.openExternal(url); return true; }
           case 'local.detect': return active.localAccounts.scan();

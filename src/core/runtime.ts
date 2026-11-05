@@ -1,4 +1,6 @@
+import { PoolRouter } from '../gateway/pool-router.js';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { ConfigStore, type SecretStore } from './store.js';
 import { ConnectionSchema, ModelSchema, type Connection } from './config.js';
@@ -13,6 +15,17 @@ import { loadReasoningVault } from './reasoning-key.js';
 
 export async function createRuntime(directory: string, secrets: SecretStore, home: string, systemProxy?: SystemProxyResolver, codexExecutable?: string) {
   const store = await new ConfigStore(directory).load();
+  // Migrate identity hints from our own isolated helper cache before publishing
+  // pooled models. This does not read or modify the user's Codex directory.
+  for (const connection of store.get().connections.filter(c => c.auth === 'chatgpt-device' && (!c.accountId || !c.accountEmail))) {
+    let auth: any;
+    try { auth = JSON.parse(await readFile(path.join(directory, 'accounts', connection.id, 'codex', 'auth.json'), 'utf8')); }
+    catch { continue; } // One unreadable account must not prevent managing others.
+    let email: unknown;
+    try { email = JSON.parse(Buffer.from(auth.tokens?.id_token?.split('.')[1] ?? '', 'base64url').toString('utf8')).email; } catch { /* Hint only; actual credentials are checked on use. */ }
+    if (typeof auth.tokens?.account_id === 'string') await store.update(config => { const current = config.connections.find(c => c.id === connection.id)!; current.accountId = auth.tokens.account_id; if (typeof email === 'string') current.accountEmail = email; });
+  }
+
   const usage = new UsageStore(path.join(directory, 'usage'));
   let managed: ManagedNetworks;
   const network = new Network(() => store.get(), secrets, systemProxy, id => managed.proxyUrl(id));
@@ -23,22 +36,34 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   const discoveryTasks = new Map<string, Promise<unknown>>();
   const rediscover = new Set<string>();
   const keyVersions = new Map<string, number>();
+  const identityUpdates = new Set<Promise<unknown>>();
   let closed = false;
   function login(connection: Connection) {
-    const signature = JSON.stringify({ auth: connection.auth, proxy: connection.proxy, defaultProxy: store.get().defaultProxy, proxies: store.get().proxies, networks: store.get().networkProfiles });
+    const signature = JSON.stringify({ auth: connection.auth, loginMethod: connection.loginMethod, proxy: connection.proxy, defaultProxy: store.get().defaultProxy, proxies: store.get().proxies, networks: store.get().networkProfiles });
     const previous = logins.get(connection.id);
     if (previous && previous.signature !== signature) { previous.login.close(); logins.delete(connection.id); }
     if (!logins.has(connection.id)) {
       const helper = new DeviceLogin(path.join(directory, 'accounts', connection.id, 'codex'), connection, network, codexExecutable);
       let authenticated = false;
-      helper.on('state', state => { const newlyAuthenticated = state.phase === 'authenticated' && !authenticated; authenticated = state.phase === 'authenticated'; if (newlyAuthenticated && !discoveryTasks.has(connection.id)) scheduleDiscovery(connection.id); });
+      helper.on('state', state => {
+        const newlyAuthenticated = state.phase === 'authenticated' && !authenticated;
+        authenticated = state.phase === 'authenticated';
+        if (newlyAuthenticated && typeof state.accountId === 'string') {
+          const update = store.update(config => { const current = config.connections.find(c => c.id === connection.id); if (current) { current.accountId = state.accountId; if (state.method && typeof state.account === 'string' && state.account !== 'ChatGPT') current.accountEmail = state.account; } })
+            .then(config => clients.updateCatalog(config)).then(() => scheduleDiscovery(connection.id)).catch(() => {
+              discoveries.set(connection.id, { phase: 'error', message: '账号已登录，但身份信息保存失败，请重新连接。' });
+            });
+          identityUpdates.add(update); void update.finally(() => identityUpdates.delete(update));
+        }
+      });
       logins.set(connection.id, { signature, login: helper });
     }
     return logins.get(connection.id)!.login;
   }
   let usageWriteFailed = false;
+  const poolRouter = await new PoolRouter(path.join(directory, 'pool-routing.json')).load();
   const reasoningVault = await loadReasoningVault(directory, secrets);
-  const gatewayOptions = { config: () => store.get(), secrets, network, usage, reasoningVault, chatgptCredentials: (c: Connection) => login(c).credentials(), onUsageError: () => { usageWriteFailed = true; } };
+  const gatewayOptions = { config: () => store.get(), secrets, network, usage, reasoningVault, poolRouter, chatgptCredentials: (c: Connection) => login(c).credentials(), onUsageError: () => { usageWriteFailed = true; } };
   let gateway = await startGateway(gatewayOptions);
   managed = new ManagedNetworks(directory, store, secrets, network, () => gateway.activeRequests() === 0 && discoveryTasks.size === 0 && ![...logins.values()].some(value => ['starting', 'waiting'].includes(value.login.state.phase)));
   async function ensureClient(id: 'codex' | 'claude' | 'generic') {
@@ -56,10 +81,12 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   }
   async function saveConnection(raw: unknown, apiKey?: string, autoDiscover = false) {
     const connection = ConnectionSchema.parse(raw);
-    if (apiKey) { if (!secrets.set) throw new Error('Credentials are read-only.'); connection.secretRef = `connection:${connection.id}`; await secrets.set(connection.secretRef, apiKey); keyVersions.set(connection.id, (keyVersions.get(connection.id) ?? 0) + 1); }
+    if (connection.auth !== 'chatgpt-device') { delete connection.accountId; delete connection.accountEmail; }
+    if (apiKey) { if (!secrets.set) throw new Error('Credentials are read-only.'); connection.credentialVersion = randomBytes(12).toString('hex'); connection.secretRef = `connection:${connection.id}:${connection.credentialVersion}`; await secrets.set(connection.secretRef, apiKey); keyVersions.set(connection.id, (keyVersions.get(connection.id) ?? 0) + 1); }
     const config = await store.update(current => {
       const previous = current.connections.find(c => c.id === connection.id);
       if (!connection.secretRef && previous?.secretRef) connection.secretRef = previous.secretRef;
+      if (!apiKey && previous?.credentialVersion) connection.credentialVersion = previous.credentialVersion;
       current.connections = [...current.connections.filter(c => c.id !== connection.id), connection];
     });
     await clients.updateCatalog(config);
@@ -123,10 +150,16 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     },
     async importLocalAccount(id: string) { const connection = await localAccounts.importAccount(id); await saveConnection(connection); scheduleDiscovery(connection.id); await localAccounts.scan(); return connection.id; },
     discoveryStates: () => Object.fromEntries(discoveries),
+    async startLogin(id: string) {
+      const connection = store.get().connections.find(c => c.id === id && c.auth === 'chatgpt-device');
+      if (!connection) throw new Error('ChatGPT connection not found.');
+      if (connection.loginMethod === 'browser' && [...logins].some(([other, value]) => other !== id && value.login.state.method === 'browser' && ['starting', 'waiting'].includes(value.login.state.phase))) throw new Error('请先完成或取消另一个账号的浏览器登录，再登录此账号。');
+      return login(connection).login();
+    },
     loginFor(id: string) { const connection = store.get().connections.find(c => c.id === id && c.auth === 'chatgpt-device'); if (!connection) throw new Error('ChatGPT connection not found.'); return login(connection); },
     loginStates() { return Object.fromEntries([...logins.entries()].map(([id, value]) => [id, value.login.state])); },
     usageWriteFailed: () => usageWriteFailed,
-    async close() { closed = true; for (const { login } of logins.values()) login.close(); await gateway.close(); await managed.close(); await Promise.allSettled(discoveryTasks.values()); },
+    async close() { closed = true; for (const { login } of logins.values()) login.close(); await gateway.close(); await managed.close(); await Promise.allSettled(discoveryTasks.values()); await Promise.allSettled(identityUpdates); },
   };
 }
 export type Runtime = Awaited<ReturnType<typeof createRuntime>>;

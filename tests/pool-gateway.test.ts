@@ -1,0 +1,30 @@
+import { afterEach, expect, it } from 'vitest';
+import { ConfigSchema } from '../src/core/config.js';
+import { catalogRoutes } from '../src/core/model-pool.js';
+import { startGateway, tokenHash } from '../src/gateway/server.js';
+import { UsageStore } from '../src/core/usage.js';
+import type { Network } from '../src/core/network.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+const cleanups: (()=>Promise<unknown>)[]=[];
+afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();});
+it('routes real HTTP tool continuations to the same account and records actual per-account usage',async()=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'mb-pool-http-'));cleanups.push(()=>rm(directory,{recursive:true,force:true}));
+  const config=ConfigSchema.parse({port:0,clients:[{id:'client',name:'client',tokenHash:tokenHash('fixture-key')}],connections:['a','b'].map(id=>({id,name:id,provider:'kimi',auth:'none',baseUrl:'https://upstream.invalid/v1',models:[{id:'same',name:'Same',upstreamId:'same',protocols:['chat']}]}))});
+  const calls:{account:string;input:any}[]=[];
+  const network={request:async(connection:any,_url:any,request:any)=>{
+    const input=JSON.parse(request.body);calls.push({account:connection.id,input});
+    const toolOutput=input.messages.find((m:any)=>m.role==='tool');
+    if(toolOutput)expect(input.messages.find((m:any)=>m.role==='assistant').reasoning_content).toBe('original-thinking-'+connection.id);
+    return new Response(JSON.stringify({id:'fixture',choices:[{message:{role:'assistant',content:toolOutput?'done':null,reasoning_content:'original-thinking-'+connection.id,...(!toolOutput?{tool_calls:[{id:'call_probe',type:'function',function:{name:'probe',arguments:'{}'}}]}:{})},finish_reason:toolOutput?'stop':'tool_calls'}],usage:{prompt_tokens:10,completion_tokens:5}}),{headers:{'content-type':'application/json'}});
+  },close:async()=>{}} as unknown as Network;
+  const usage=new UsageStore(directory);const gateway=await startGateway({config:()=>config,secrets:{get:async()=>undefined},network,usage});cleanups.push(()=>gateway.close());
+  const model=catalogRoutes(config)[0]!.id;
+  const post=async(session:string,input:any)=>{const r=await fetch(gateway.address+'/v1/responses',{method:'POST',headers:{authorization:'Bearer fixture-key','content-type':'application/json','x-model-bridge-session':session},body:JSON.stringify({model,input,stream:false,tools:[{type:'function',name:'probe',parameters:{type:'object',properties:{}}}]})});expect(r.status).toBe(200);return r.json() as Promise<any>};
+  const first=await post('chat-one','first');await post('chat-two','first');
+  await post('chat-one',[{role:'user',content:'first'},...first.output,{type:'function_call_output',call_id:'call_probe',output:'tool result'}]);
+  expect(calls.map(c=>c.account)).toEqual(['a','b','a']);
+  const records=await usage.list();expect(records.map(r=>r.connectionId).sort()).toEqual(['a','a','b']);
+  expect(records.every(r=>r.model===model&&r.tokens.input===10)).toBe(true);
+});

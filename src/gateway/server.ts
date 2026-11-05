@@ -1,3 +1,5 @@
+import { PoolRouter } from './pool-router.js';
+import { poolCandidates, reasoningScope } from '../core/model-pool.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -34,13 +36,15 @@ async function write(res: ServerResponse, value: string | Uint8Array) {
 }
 export interface GatewayOptions {
   config: () => Config; secrets: SecretStore; network: Network; usage: UsageStore;
-  chatgptCredentials?: (connection: Connection) => Promise<{ token: string; accountId: string }>;
+  chatgptCredentials?: (connection: Connection) => Promise<{ token: string; accountId: string; email?: string }>;
   onUsageError?: () => void;
   reasoningVault?: ReasoningVault;
+  poolRouter?: PoolRouter;
 }
 export async function startGateway(options: GatewayOptions) {
   const inflight = new Set<AbortController>();
   const handlers = new Set<Promise<void>>();
+  const poolRouter = options.poolRouter ?? new PoolRouter();
   const reasoningVault = options.reasoningVault ?? new ReasoningVault();
   let address = '';
   const server = createServer((req, res) => {
@@ -75,12 +79,15 @@ export async function startGateway(options: GatewayOptions) {
       const input = await body(req);
       if (typeof input.model !== 'string') throw new BridgeError(400, 'model_required', 'Select a model from the gateway model list.');
       if (input.stream !== undefined && typeof input.stream !== 'boolean') throw new BridgeError(400, 'invalid_request', 'stream must be a boolean.');
-      selected = input.model; route = resolveRoute(options.config(), selected);
+      selected = input.model;
+      const candidates = poolCandidates(options.config(), selected);
+      const session = req.headers['x-model-bridge-session'] ?? req.headers['session_id'] ?? input.metadata?.user_id;
+      route = candidates?.length ? await poolRouter.select(selected, candidates, input, clientId, protocol, reasoningVault, typeof session === 'string' ? session : undefined) : resolveRoute(options.config(), selected);
       const { connection, model } = route;
       if (input.tools?.length && !model.tools) throw new BridgeError(400, 'tools_unsupported', 'This model does not support tool calls.');
       const upstream = model.protocols.includes(protocol) ? protocol : model.protocols[0]!;
       const translated = upstream !== protocol || hasGatewayReasoning(input);
-      const reasoning = reasoningVault.context(JSON.stringify([clientId, connection.id, connection.baseUrl, model.upstreamId]), upstream, connection.provider, model.upstreamId);
+      const reasoning = reasoningVault.context(reasoningScope(clientId, route), upstream, connection.provider, model.upstreamId);
       const canonical = translated ? decodeRequest(protocol, input, reasoning) : undefined;
       if (canonical && !model.images && canonical.messages.some(m => m.content.some(p => p.type === 'image'))) throw new BridgeError(400, 'images_unsupported', 'This model does not accept images.');
       let payload: any = canonical ? encodeRequest(upstream, canonical, model.upstreamId, reasoning) : { ...input, model: model.upstreamId };
@@ -93,6 +100,7 @@ export async function startGateway(options: GatewayOptions) {
       if (connection.auth === 'chatgpt-device') {
         if (!options.chatgptCredentials) throw new BridgeError(503, 'device_login_unavailable', 'Device login is not configured in this gateway instance.');
         const credentials = await options.chatgptCredentials(connection);
+        if (connection.accountId && credentials.accountId !== connection.accountId || connection.accountEmail && credentials.email !== connection.accountEmail) throw new BridgeError(409, 'account_identity_changed', 'The account identity changed. Reconnect this account before continuing.');
         endpoint = 'https://chatgpt.com/backend-api/codex/responses';
         if (upstream !== 'responses') throw new BridgeError(400, 'invalid_chatgpt_protocol', 'ChatGPT device connections must use Responses upstream.');
         headers.authorization = `Bearer ${credentials.token}`; headers['ChatGPT-Account-ID'] = credentials.accountId;
@@ -110,7 +118,7 @@ export async function startGateway(options: GatewayOptions) {
       if (upstream === 'chat' && payload.stream) payload.stream_options = { ...payload.stream_options, include_usage: true };
       const upstreamResponse = await options.network.request(connection, endpoint, { method: 'POST', headers, body: JSON.stringify(payload), signal: controller.signal });
       firstByte = Math.round(performance.now() - started);
-      if (!upstreamResponse.ok) { await upstreamResponse.body?.cancel(); throw new BridgeError(upstreamResponse.status >= 400 && upstreamResponse.status < 500 ? upstreamResponse.status : 502, 'upstream_rejected', `The upstream service returned HTTP ${upstreamResponse.status}. Check account access, limits and model configuration.`); }
+      if (!upstreamResponse.ok) { poolRouter.rejected(connection.id, upstreamResponse.status, upstreamResponse.headers.get('retry-after')); await upstreamResponse.body?.cancel(); throw new BridgeError(upstreamResponse.status >= 400 && upstreamResponse.status < 500 ? upstreamResponse.status : 502, 'upstream_rejected', `The upstream service returned HTTP ${upstreamResponse.status}. Check account access, limits and model configuration.`); }
       res.setHeader('x-model-bridge-request-id', requestId);
       if (!upstreamResponse.body) throw new BridgeError(502, 'empty_upstream_response', 'The upstream returned an empty response.');
       const streaming = upstreamResponse.headers.get('content-type')?.includes('text/event-stream');
@@ -169,6 +177,7 @@ export async function startGateway(options: GatewayOptions) {
       status = controller.signal.aborted ? 'cancelled' : 'error';
       const failure = error instanceof BridgeError ? error : new BridgeError(500, 'gateway_error', 'The gateway could not complete the request.');
       errorCode = failure.code;
+      if (route && ['credentials_missing', 'chatgpt_login_required'].includes(failure.code)) poolRouter.rejected(route.connection.id, 401);
       if (!res.destroyed) {
         if (!res.headersSent) json(res, failure.status, errorBody(protocol, failure));
         else res.end(sse({ type: 'error', error: { type: failure.code, code: failure.code, message: failure.message } }, 'error'));

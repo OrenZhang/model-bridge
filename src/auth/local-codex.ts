@@ -47,7 +47,8 @@ export class LocalCodexAccounts {
     // JWT claims are display hints only. They do not authorize a request.
     const email = typeof jwt.email === 'string' ? jwt.email : undefined;
     const identity = chatgpt ? token.account_id + ':' + (email ?? '') : source.home;
-    const connectionId = 'codex-' + createHash('sha256').update(identity).digest('hex').slice(0, 14);
+    const known = chatgpt ? this.config().connections.find(c => c.auth === 'chatgpt-device' && c.accountId === token.account_id && c.accountEmail === email) : undefined;
+    const connectionId = known?.id ?? 'codex-' + createHash('sha256').update(identity).digest('hex').slice(0, 14);
     const info: LocalCodexInfo = { id: source.id, directory: source.home, present: loaded.present, provider: settings.model_provider ?? 'openai', model: settings.model, kind: chatgpt ? 'chatgpt' : apiKey ? 'api-key' : 'none', canImport: !!(chatgpt || apiKey), connectionId, imported: this.config().connections.some(c => c.id === connectionId), ...(email ? { email } : {}), ...(typeof extra.chatgpt_plan_type === 'string' ? { plan: extra.chatgpt_plan_type } : {}) };
     if (!info.canImport) info.message = '未找到可复用的登录凭据。可通过设备码添加账号；新版系统凭据格式可能需要重新授权。';
     return info;
@@ -65,7 +66,7 @@ export class LocalCodexAccounts {
     const loaded = await this.load(source); const info = this.identify(source, loaded);
     if (!info.canImport) throw new Error(info.message);
     const existing = this.config().connections.find(c => c.id === info.connectionId); if (existing) return existing;
-    const connection: Connection = { id: info.connectionId!, name: info.email ? `Codex · ${info.email}` : '本机 Codex 账号', provider: 'openai', auth: info.kind === 'chatgpt' ? 'chatgpt-device' : 'api-key', baseUrl: info.kind === 'chatgpt' ? 'https://chatgpt.com/backend-api/codex' : 'https://api.openai.com/v1', proxy: { mode: 'inherit' }, enabled: true, models: [] };
+    const connection: Connection = { id: info.connectionId!, name: info.email ? `Codex · ${info.email}` : '本机 Codex 账号', provider: 'openai', auth: info.kind === 'chatgpt' ? 'chatgpt-device' : 'api-key', baseUrl: info.kind === 'chatgpt' ? 'https://chatgpt.com/backend-api/codex' : 'https://api.openai.com/v1', loginMethod: 'browser', ...(info.kind === 'chatgpt' ? { accountId: loaded.auth.tokens.account_id, ...(info.email ? { accountEmail: info.email } : {}) } : {}), proxy: { mode: 'inherit' }, enabled: true, models: [] };
     if (info.kind === 'chatgpt') {
       const auth = { auth_mode: 'chatgpt', OPENAI_API_KEY: null, tokens: loaded.auth.tokens, last_refresh: loaded.auth.last_refresh };
       await atomicWrite(path.join(this.data, 'accounts', connection.id, 'codex', 'auth.json'), JSON.stringify(auth));

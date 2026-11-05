@@ -25,7 +25,7 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Verify real Codex with simulated providers
-        run: node scripts/validate-codex-providers.mjs --mock
+        run: node scripts/validate-codex-providers.mjs --mock-pools
       - name: Check desktop packaging
         run: npx electron-builder --dir --publish never
         env:

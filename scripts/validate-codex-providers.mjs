@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { catalogRoutes } from '../dist/core/model-pool.js';
 /** Real Codex 0.144.1 app-server integration, with isolated credentials and fixtures.
  * Run after npm run build using Node >=22.19:
  *   node scripts/validate-codex-providers.mjs --mock
@@ -26,7 +27,8 @@ import { UsageStore } from '../dist/core/usage.js';
 import { startGateway, tokenHash } from '../dist/gateway/server.js';
 import { SSEDecoder, sse } from '../dist/gateway/sse.js';
 
-const mock = process.argv.includes('--mock');
+const mockPools = process.argv.includes('--mock-pools');
+const mock = process.argv.includes('--mock') || mockPools;
 const root = await mkdtemp(path.join(os.tmpdir(), 'model-bridge-codex-validation-'));
 const cleanup = [];
 const results = [];
@@ -110,11 +112,12 @@ async function createMockGateway() {
     { id: 'kimi', provider: 'kimi', name: 'Kimi mock', auth: 'none', baseUrl: upstream.url + '/v1', models: [{ id: 'fixture', name: 'Fixture', upstreamId: 'kimi-k2.5', protocols: ['chat'], reasoning: ['low'] }] },
     { id: 'minimax', provider: 'minimax', name: 'MiniMax mock', auth: 'none', baseUrl: upstream.url + '/v1', models: [{ id: 'fixture', name: 'Fixture', upstreamId: 'MiniMax-M3', protocols: ['messages'], reasoning: ['low'] }] },
   ] });
+  if (mockPools) config.connections.push(...config.connections.map(connection => ({ ...structuredClone(connection), id: connection.id + '-second', name: connection.name + ' second account' })));
   const secrets = { get: async () => undefined }; const network = new Network(() => config, secrets);
   const usage = new UsageStore(path.join(root, 'usage'));
   const gateway = await startGateway({ config: () => config, secrets, network, usage });
   cleanup.push(() => network.close()); cleanup.push(() => gateway.close());
-  routeMetadata = Object.fromEntries(config.connections.map(connection => [connection.id + '/fixture', { upstreamHost: '127.0.0.1', upstreamModel: connection.models[0].upstreamId, upstreamProtocol: connection.models[0].protocols[0] }]));
+  routeMetadata = Object.fromEntries(catalogRoutes(config).map(({ id, model }) => [id, { upstreamHost: '127.0.0.1', upstreamModel: model.upstreamId, upstreamProtocol: model.protocols[0] }]));
   return { url: gateway.address, key, replayChecks: upstream.replayChecks, usage };
 }
 
@@ -131,7 +134,7 @@ async function observeGateway(gateway, route, metrics) {
         if (item.type === 'function_call_output') metrics.toolResultsReplayed++;
       }
     }
-    const upstream = await fetch(gateway.url + req.url, { method: req.method, headers: { 'content-type': 'application/json', authorization: `Bearer ${gateway.key}` }, ...(raw ? { body: raw } : {}), signal: AbortSignal.timeout(120000) });
+    const upstream = await fetch(gateway.url + req.url, { method: req.method, headers: { 'content-type': 'application/json', authorization: `Bearer ${gateway.key}`, ...(typeof req.headers.session_id === 'string' ? { session_id: req.headers.session_id } : {}) }, ...(raw ? { body: raw } : {}), signal: AbortSignal.timeout(120000) });
     metrics.httpStatuses.push(upstream.status);
     res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
     const parser = new SSEDecoder(({ data }) => {
@@ -247,7 +250,7 @@ try {
 } catch (error) { results.push({ status: 'blocked', error: String(error.message).slice(0, 500) }); }
 finally {
   for (const result of results.filter(result => result.status === 'blocked')) process.stdout.write(JSON.stringify(result) + '\n');
-  const report = { createdAt: new Date().toISOString(), mockUpstream: mock, codexVersion: '0.144.1', results };
+  const report = { createdAt: new Date().toISOString(), mockUpstream: mock, modelPools: mockPools, codexVersion: '0.144.1', results };
   if (reportFile) { await mkdir(path.dirname(reportFile), { recursive: true, mode: 0o700 }); await writeFile(reportFile, JSON.stringify(report, null, 2) + '\n', { mode: 0o600 }); }
   const cleanupErrors = [];
   for (const close of cleanup.reverse()) {
