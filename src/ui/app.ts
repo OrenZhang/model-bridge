@@ -134,14 +134,15 @@ async function refresh() {
 }
 function updateLogin() {
   if (!activeLogin || !$<HTMLDialogElement>('#login-dialog').open) return;
-  const login = state.logins[activeLogin] ?? { phase: 'starting' };
-  const method = login.method ?? state.config.connections.find((c: any) => c.id === activeLogin)?.loginMethod;
   const connection = state.config.connections.find((c: any) => c.id === activeLogin);
+  const login = state.logins[activeLogin] ?? { phase: 'starting' };
+  const method = login.method ?? connection?.loginMethod;
+  const discovery = state.discoveries[activeLogin];
   const provider = providerNames[connection?.provider] ?? 'ChatGPT';
   const subscription = connection?.auth === 'subscription';
   $('#login-provider').textContent = subscription ? provider : 'CHATGPT';
   $('#login-title').textContent = subscription ? provider + ' 订阅登录' : method === 'browser' ? 'ChatGPT 官方登录' : 'ChatGPT 设备码登录';
-  $('#login-content').innerHTML = login.phase === 'waiting' && method === 'browser' ? '<div class="empty"><h3>在浏览器完成登录</h3><p>授权完成后会自动连接。添加其他账号时，请在授权页选择对应账号。</p></div>' : login.phase === 'waiting' ? `<p class="hint">打开授权页面，登录 ${escape(provider)} 并按页面提示确认授权。</p><div class="device-code">${escape(login.userCode)}</div><p class="hint">${escape(login.verificationUrl)}${subscription ? '' : '<br>如果设备码登录未启用，请在 ChatGPT 安全设置或工作区权限中开启。'}</p>` : login.phase === 'authenticated' ? `<div class="empty"><h3>账号已连接</h3><p>${escape(login.account)}</p><p>正在自动获取模型，稍后会更新目录。</p></div>` : `<div class="empty">${escape(login.error ?? (login.phase === 'cancelled' ? '登录已取消' : '正在启动登录…'))}</div>`;
+  $('#login-content').innerHTML = login.phase === 'waiting' && method === 'browser' ? '<div class="empty"><h3>在浏览器完成登录</h3><p>授权完成后会自动连接。添加其他账号时，请在授权页选择对应账号。</p></div>' : login.phase === 'waiting' ? `<p class="hint">打开授权页面，登录 ${escape(provider)} 并按页面提示确认授权。</p><div class="device-code">${escape(login.userCode)}</div><p class="hint">${escape(login.verificationUrl)}${subscription ? '' : '<br>如果设备码登录未启用，请在 ChatGPT 安全设置或工作区权限中开启。'}</p>` : login.phase === 'authenticated' ? `<div class="empty"><h3>账号已连接</h3><p>${escape(login.account)}</p><p>${discovery?.phase === 'ready' ? '已加载 ' + discovery.count + ' 个模型。' : discovery?.phase === 'error' ? '账号授权已完成，模型同步失败：' + escape(discovery.message) : '正在加载模型目录…'}</p></div>` : `<div class="empty">${escape(login.error ?? (login.phase === 'cancelled' ? '登录已取消' : login.phase === 'idle' ? '当前未发起登录，请关闭窗口后重新授权。' : '正在启动登录…'))}</div>`;
   $<HTMLButtonElement>('#open-login').disabled = login.phase !== 'waiting';
 }
 function updateReuse() {

@@ -15,15 +15,16 @@ ACP 是 Agent 会话协议，不等于模型认证协议。当前实现直接复
 
 凭据只保存在系统加密凭据库。界面状态不含 access/refresh/device token；移除连接清除本地保存的订阅令牌。授权轮询支持 pending、slow_down、拒绝、超时与取消；并发调用共享一次刷新。区域、账号和连接 ID 共同隔离凭据。已有对话继续遵循原账号绑定。
 
-Kimi 通过官方 `/models` 读取协议、工具支持、图片输入和上下文信息。MiniMax 优先尝试 `/models`；只有官方模型地址明确返回 404/405 时，使用官方 first-run 目录并在界面标记“权限以套餐为准”。401/403 不回退为成功。内置模型 ID 不代表账号已获得调用权限。
+Kimi 通过官方 `/models` 读取协议、工具支持、图片输入和上下文信息。MiniMax Code 订阅直接加载官方 first-run 目录，在界面标记“权限以套餐为准”；它的模型列表路径实测返回 503，不用于判断登录是否成功。MiniMax API Key 连接仍优先尝试 `/models`，仅官方地址返回 404/405 时回退预置目录，401/403 保留错误。内置模型 ID 不代表账号已获得调用权限。
 
 ## 验证范围
 
 - 2026-11-05：Kimi 中国区 `/api/oauth/device_authorization` 和 MiniMax 中国区 `/oauth2/device/code` 均返回 HTTP 200 和可用的官方授权页。测试立即取消，没有替用户完成登录，没有保存账号凭据。
+- MiniMax 授权完成后保持登录状态，重启从凭据库恢复，不重复授权或轮换对话身份；回归测试覆盖授权、模型加载和重启全过程。
 - 自动测试覆盖两种 MiniMax 设备响应、PKCE、pending/slow_down、取消、错误 audience、独立账号与区域、令牌轮换和并发刷新。
 - 模拟订阅凭据经过真实本地 HTTP 网关验证模型发现、区域地址、Bearer 注入和跨协议 Responses 输出；Kimi Messages 使用 beta 路径和 adaptive thinking。
-- 本机现有 ChatGPT 账号和 OpenAI API Key 连接分别通过真实 Codex 0.144.1 的 3 轮对话、3 次工具调用；原生加密推理和工具结果均继续回传。此结果不代表 Kimi/MiniMax 的完整订阅授权已验收。
-- Kimi/MiniMax API Key 的真实跨协议多轮、thinking、工具调用结果见 [原验证记录](validation.md)。新订阅登录需要账号本人完成授权后，再验收其具体套餐权益。
+- 本机现有 ChatGPT 账号和 OpenAI API Key 连接分别通过真实 Codex 0.144.1 的 3 轮对话、3 次工具调用；原生加密推理和工具结果均继续回传。此结果与订阅通道测试分开记录。
+- Kimi/MiniMax API Key 的真实跨协议多轮、thinking、工具调用结果见 [原验证记录](validation.md)。Kimi 订阅完整授权仍待账号本人验证；MiniMax 账号本人已完成授权，使用原有凭据恢复连接，MiniMax-M2.7 实际 Responses 调用已返回 HTTP 200、完整响应和预期文本。
 
 ## 官方协议依据
 

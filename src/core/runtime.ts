@@ -3,7 +3,7 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { ConfigStore, type SecretStore } from './store.js';
-import { ConnectionSchema, ModelSchema, type Connection } from './config.js';
+import { ConnectionSchema, ModelSchema, BridgeError, type Connection } from './config.js';
 import { Network, type SystemProxyResolver } from './network.js';
 import { UsageStore } from './usage.js';
 import { startGateway, tokenHash } from '../gateway/server.js';
@@ -36,12 +36,12 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   const logins = new Map<string, { signature: string; login: DeviceLogin }>();
   const subscriptions = new Map<string, { signature: string; login: ProviderLogin }>();
   function subscription(connection: Connection) {
-    const signature = JSON.stringify([connection.provider, connection.region, connection.baseUrl, connection.accountId, connection.credentialVersion, connection.proxy, store.get().defaultProxy, store.get().proxies, store.get().networkProfiles]);
+    const signature = JSON.stringify([connection.auth, connection.provider, connection.region, connection.baseUrl, connection.proxy, store.get().defaultProxy, store.get().proxies, store.get().networkProfiles]);
     const previous = subscriptions.get(connection.id);
     if (previous && previous.signature !== signature) { previous.login.close(); subscriptions.delete(connection.id); }
     if (!subscriptions.has(connection.id)) {
       const helper = new ProviderLogin(connection, network, secrets);
-      helper.on('state', state => {
+      helper.on('authorized', state => {
         if (state.phase === 'authenticated') {
           const update = store.update(config => { const current = config.connections.find(c => c.id === connection.id && c.auth === 'subscription' && c.region === connection.region && c.provider === connection.provider); if (!current) return; current.accountId = state.accountId; current.accountEmail = state.account; current.credentialVersion = randomBytes(12).toString('hex'); })
             .then(config => clients.updateCatalog(config)).then(() => scheduleDiscovery(connection.id)).catch(() => { discoveries.set(connection.id, { phase: 'error', message: '账号已登录，但身份信息保存失败，请重试。' }); });
@@ -50,7 +50,9 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       });
       subscriptions.set(connection.id, { signature, login: helper });
     }
-    return subscriptions.get(connection.id)!.login;
+    const helper = subscriptions.get(connection.id)!.login;
+    helper.updateConnection(connection);
+    return helper;
   }
   const discoveries = new Map<string, { phase: 'loading' | 'ready' | 'error'; message?: string; count?: number; source?: 'preset' }>();
   const discoveryTasks = new Map<string, Promise<unknown>>();
@@ -83,7 +85,13 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   let usageWriteFailed = false;
   const poolRouter = await new PoolRouter(path.join(directory, 'pool-routing.json')).load();
   const reasoningVault = await loadReasoningVault(directory, secrets);
-  const gatewayOptions = { config: () => store.get(), secrets, network, usage, reasoningVault, poolRouter, chatgptCredentials: (c: Connection) => login(c).credentials(), subscriptionCredentials: (c: Connection) => subscription(c).credentials(), onUsageError: () => { usageWriteFailed = true; } };
+  const gatewayOptions = { config: () => store.get(), secrets, network, usage, reasoningVault, poolRouter, chatgptCredentials: (c: Connection) => login(c).credentials(), subscriptionCredentials: async (c: Connection) => {
+    const current = store.get().connections.find(value => value.id === c.id);
+    if (!current || current.credentialVersion !== c.credentialVersion) throw new BridgeError(409, 'account_identity_changed', '账号登录状态已改变，请开始新对话。');
+    const credentials = await subscription(current).credentials();
+    if (store.get().connections.find(value => value.id === c.id)?.credentialVersion !== current.credentialVersion) throw new BridgeError(409, 'account_identity_changed', '账号登录状态已改变，请开始新对话。');
+    return credentials;
+  }, onUsageError: () => { usageWriteFailed = true; } };
   let gateway = await startGateway(gatewayOptions);
   managed = new ManagedNetworks(directory, store, secrets, network, () => gateway.activeRequests() === 0 && discoveryTasks.size === 0 && ![...logins.values(), ...subscriptions.values()].some(value => ['starting', 'waiting'].includes(value.login.state.phase)));
   async function ensureClient(id: 'codex' | 'claude' | 'generic') {
@@ -127,6 +135,10 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       await login(connection).credentials();
       const result = await login(connection).catalog();
       found = (result.data ?? []).map((m: any) => ({ id: m.model, name: m.displayName ?? m.model, reasoning: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort), images: (m.inputModalities ?? []).includes('image') }));
+    } else if (connection.auth === 'subscription' && connection.provider === 'minimax') {
+      await subscription(connection).credentials();
+      found = minimaxPresetModels(connection) ?? [];
+      discoveries.set(id, { phase: 'loading', source: 'preset', message: '使用 MiniMax 官方预置目录；实际权限以套餐为准。' });
     } else {
       const key = connection.auth === 'subscription' ? (await subscription(connection).credentials()).token : connection.secretRef ? await secrets.get(connection.secretRef) : undefined;
       const headers: Record<string, string> = { accept: 'application/json' };
@@ -170,6 +182,10 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     void discover(id).catch(() => {});
   }
   await clients.updateCatalog(store.get());
+  await Promise.allSettled(store.get().connections.filter(c => c.auth === 'subscription' && c.credentialVersion).map(async connection => {
+    await subscription(connection).restore();
+    if (subscription(connection).state.phase === 'authenticated' && connection.provider === 'minimax' && !connection.models.length) scheduleDiscovery(connection.id);
+  }));
   let changingListener = false;
   return { store, network, usage, clients, get gateway() { return gateway; }, ensureClient, saveConnection, discover, scheduleDiscovery, localAccounts, managed,
     async setLanAccess(enabled: boolean) {

@@ -37,6 +37,24 @@ export class ProviderLogin extends EventEmitter {
     if (connection.baseUrl.replace(/\/+$/, '') !== this.endpoints.base) throw new Error('Subscription credentials require the official regional endpoint.');
     this.ref = `subscription:${connection.provider}:${connection.region}:${connection.id}`;
   }
+  updateConnection(connection: Connection) {
+    if ([connection.id, connection.auth, connection.provider, connection.region, connection.baseUrl].join('\0') !== [this.connection.id, this.connection.auth, this.connection.provider, this.connection.region, this.connection.baseUrl].join('\0')) throw new Error('Subscription connection changed.');
+    this.connection = connection;
+  }
+  private accountState(tokens: Tokens): LoginState {
+    return { phase: 'authenticated', method: 'device', account: tokens.account ?? (this.connection.provider === 'minimax' ? 'MiniMax' : 'Kimi'), accountId: tokens.accountId };
+  }
+  async restore() {
+    if (this.state.phase !== 'idle') return;
+    const generation = this.generation;
+    try {
+      const tokens = await this.loadCredentials();
+      // Restoring saved credentials must not emit a new authorization event or rotate identity.
+      if (generation === this.generation && this.state.phase === 'idle') this.publish(this.accountState(tokens));
+    } catch {
+      if (generation === this.generation && this.state.phase === 'idle' && this.connection.credentialVersion) this.publish({ phase: 'error', error: '无法恢复订阅登录，请检查网络或重新授权。' });
+    }
+  }
   private publish(state: LoginState) { this.state = state; this.emit('state', state); }
   private async form(endpoint: string, values: Record<string, string>, signal?: AbortSignal) {
     const response = await this.network.request(this.connection, this.endpoints.host + endpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': 'ModelBridge/0.1.0' }, body: new URLSearchParams(values).toString(), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
@@ -94,14 +112,21 @@ export class ProviderLogin extends EventEmitter {
         } catch { signal.throwIfAborted(); /* Profile hints are optional. */ }
       }
       await this.store(tokens, generation);
-      if (generation === this.generation) this.publish({ phase: 'authenticated', method: 'device', account: tokens.account ?? (this.connection.provider === 'minimax' ? 'MiniMax' : 'Kimi'), accountId: tokens.accountId });
+      if (generation === this.generation) {
+        this.publish(this.accountState(tokens));
+        this.emit('authorized', this.state);
+      }
       return;
     }
     throw new Error('Authorization expired.');
   }
   async credentials() {
+    const tokens = await this.loadCredentials();
+    return { token: tokens.access };
+  }
+  private async loadCredentials(): Promise<Tokens> {
     if (['starting', 'waiting'].includes(this.state.phase)) throw new BridgeError(503, 'login_in_progress', '此账号正在重新授权，请完成或取消后重试。');
-    if (this.refreshTask) return this.refreshTask.then(value => ({ token: value.access }));
+    if (this.refreshTask) return this.refreshTask;
     const generation = this.generation;
     const task = (async () => {
       const raw = await this.secrets.get(this.ref); let value: Tokens;
@@ -117,7 +142,7 @@ export class ProviderLogin extends EventEmitter {
       return value;
     })();
     this.refreshTask = task;
-    try { const value = await task; return { token: value.access }; } finally { if (this.refreshTask === task) this.refreshTask = undefined; }
+    try { return await task; } finally { if (this.refreshTask === task) this.refreshTask = undefined; }
   }
   async cancel() { this.close(); return this.state; }
   close() { this.generation++; this.controller?.abort(); if (['starting', 'waiting'].includes(this.state.phase)) this.publish({ phase: 'cancelled' }); }

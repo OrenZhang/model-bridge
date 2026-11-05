@@ -38,5 +38,40 @@ it.each(['kimi', 'minimax'] as const)('discovers and calls %s through its region
   expect(response.status).toBe(200); expect(await response.text()).toContain('SUBSCRIPTION_OK'); expect(requests).toBe(1);
   // A provider authorization failure must remain an error, never become a preset success.
   vi.mocked(runtime.network.request).mockResolvedValue(new Response('', { status: 401 }));
-  await expect(runtime.discover(provider)).rejects.toThrow('401'); expect(runtime.discoveryStates()[provider]?.phase).toBe('error');
+  if (provider === 'kimi') {
+    await expect(runtime.discover(provider)).rejects.toThrow('401'); expect(runtime.discoveryStates()[provider]?.phase).toBe('error');
+  } else {
+    const rejected = await fetch(runtime.gateway.address + '/v1/responses', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ model: provider + '/' + model, input: 'test', stream: false }) });
+    expect(rejected.status).toBe(401);
+  }
 });
+
+it('keeps MiniMax authorization visible through discovery and restart without resetting account identity', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'mb-login-lifecycle-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const store = await new ConfigStore(directory).load();
+  const baseUrl = subscriptionEndpoints('minimax', 'cn').base;
+  await store.save({ port: 0, connections: [{ id: 'minimax', name: 'Fixture', provider: 'minimax', auth: 'subscription', baseUrl }] });
+  const values = new Map<string, string>();
+  const secrets = { get: async (key: string) => values.get(key), set: async (key: string, value: string) => { values.set(key, value); } };
+  const runtime = await createRuntime(directory, secrets, directory); let current = runtime; cleanup.push(() => current.close());
+  const calls: string[] = [];
+  vi.spyOn(runtime.network, 'request').mockImplementation(async (_connection, url) => {
+    calls.push(url);
+    if (url.endsWith('/device/code')) return Response.json({ device_code: 'private-device', user_code: 'USER', verification_uri: 'https://account.minimax.cn/device', interval: 1, expires_in: 600 });
+    if (url.endsWith('/token')) return Response.json({ access_token: 'opaque-private-access', refresh_token: 'private-refresh', token_type: 'Bearer', scope: 'agent.default', expires_in: 3600 });
+    return new Response('', { status: 503 });
+  });
+  expect((await runtime.startLogin('minimax')).phase).toBe('waiting');
+  await vi.waitFor(() => expect(runtime.discoveryStates().minimax?.phase).toBe('ready'), { timeout: 4000 });
+  expect(runtime.loginStates().minimax?.phase).toBe('authenticated');
+  expect(runtime.store.get().connections[0]!.models.length).toBeGreaterThan(0);
+  expect(calls).not.toContain(baseUrl + '/models');
+  const version = runtime.store.get().connections[0]!.credentialVersion;
+  const helper = runtime.loginFor('minimax');
+  await runtime.discover('minimax'); expect(runtime.loginFor('minimax')).toBe(helper);
+  expect(runtime.loginStates().minimax?.phase).toBe('authenticated');
+  await runtime.close(); current = await createRuntime(directory, secrets, directory);
+  expect(current.loginStates().minimax?.phase).toBe('authenticated');
+  expect(current.store.get().connections[0]!.credentialVersion).toBe(version);
+  expect(current.store.get().connections[0]!.models.length).toBeGreaterThan(0);
+}, 10000);
