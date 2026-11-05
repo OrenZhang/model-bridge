@@ -18,6 +18,7 @@ it('the portable export loads every provider in real Codex from an unrelated wor
   const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: codexHome };
   for (const key of ['OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'OPENAI_BASE_URL', 'OPENAI_IDENTITY_TOKEN_FILE']) delete env[key];
   const child = spawn(codexBinary(), ['app-server', '--listen', 'stdio://'], { cwd: root, env, stdio: 'pipe', windowsHide: true });
+  const childClosed = new Promise<void>(resolve => child.once('close', () => resolve()));
   child.stderr.resume();
   const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>(); let id = 0;
   const lines = createInterface({ input: child.stdout });
@@ -31,7 +32,8 @@ it('the portable export loads every provider in real Codex from an unrelated wor
     const catalog = await rpc('model/list', { includeHidden: false });
     expect(catalog.data.map((model: any) => model.model)).toEqual(expect.arrayContaining(['kimi/test-model', 'minimax/test-model']));
   } finally {
-    const exit = child.exitCode !== null ? Promise.resolve() : new Promise<void>(resolve => child.once('exit', () => resolve()));
-    child.kill(); await exit; lines.close(); await rm(root, { recursive: true, force: true });
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await childClosed; lines.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 }, 30000);

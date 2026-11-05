@@ -17,6 +17,7 @@ it('the bundled Codex loads all providers from the generated catalog without sig
   const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: path.join(root, '.codex') };
   for (const key of ['OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'OPENAI_BASE_URL', 'OPENAI_IDENTITY_TOKEN_FILE']) delete env[key];
   const child = spawn(codexBinary(), ['app-server', '--listen', 'stdio://'], { env, stdio: 'pipe', windowsHide: true });
+  const childClosed = new Promise<void>(resolve => child.once('close', () => resolve()));
   child.stderr.resume();
   const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>(); let id = 0;
   const lines = createInterface({ input: child.stdout });
@@ -30,7 +31,8 @@ it('the bundled Codex loads all providers from the generated catalog without sig
     const catalog = await rpc('model/list', { includeHidden: false });
     expect(catalog.data.map((model: any) => model.model)).toEqual(expect.arrayContaining(['kimi/test-model', 'minimax/test-model']));
   } finally {
-    const exit = new Promise<void>(resolve => child.once('exit', () => resolve()));
-    child.kill(); await exit; lines.close(); await rm(root, { recursive: true, force: true });
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await childClosed; lines.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 }, 30000);
