@@ -121,7 +121,9 @@ export async function startGateway(options: GatewayOptions) {
       if (!upstreamResponse.ok) { poolRouter.rejected(connection.id, upstreamResponse.status, upstreamResponse.headers.get('retry-after')); await upstreamResponse.body?.cancel(); throw new BridgeError(upstreamResponse.status >= 400 && upstreamResponse.status < 500 ? upstreamResponse.status : 502, 'upstream_rejected', `The upstream service returned HTTP ${upstreamResponse.status}. Check account access, limits and model configuration.`); }
       res.setHeader('x-model-bridge-request-id', requestId);
       if (!upstreamResponse.body) throw new BridgeError(502, 'empty_upstream_response', 'The upstream returned an empty response.');
-      const streaming = upstreamResponse.headers.get('content-type')?.includes('text/event-stream');
+      const contentType = upstreamResponse.headers.get('content-type');
+      // ChatGPT's Codex endpoint can stream valid SSE without Content-Type.
+      const streaming = contentType?.includes('text/event-stream') || (connection.auth === 'chatgpt-device' && !contentType);
       const encoder = canonical ? new DownstreamEncoder(protocol, selected, canonical.tools, reasoning) : undefined;
       const decoder = translated ? new UpstreamDecoder(upstream) : undefined;
       if (!streaming) {

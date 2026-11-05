@@ -26,11 +26,11 @@ describe('client configuration', () => {
       expect(exported.model_catalog_json).toBe('codex-models.json');
       expect(exported.web_search).toBe('disabled');
       expect(exported.model_providers.model_bridge).toMatchObject({ base_url: 'http://192.168.31.21:18765/v1', requires_openai_auth: false });
-      expect(Object.keys(portable.files)).toEqual(['config.toml', 'codex-models.json', 'README.txt']);
+      expect(Object.keys(portable.files)).toEqual(['config.toml', 'codex-models.json', 'README.txt', 'install-macos.sh', 'install-windows.ps1']);
       expect(JSON.parse(portable.catalog!).models.map((model: any) => model.slug)).toEqual(['kimi/coding', 'minimax/coding']);
     } else {
       expect(exported.env).toMatchObject({ ANTHROPIC_BASE_URL: 'http://192.168.31.21:18765', ANTHROPIC_AUTH_TOKEN: 'exported-gateway-key' });
-      expect(portable.catalog).toBeUndefined(); expect(Object.keys(portable.files)).toEqual(['settings.json', 'README.txt']);
+      expect(portable.catalog).toBeUndefined(); expect(Object.keys(portable.files)).toEqual(['settings.json', 'README.txt', 'install-macos.sh', 'install-windows.ps1']);
     }
   });
   it('rejects wildcard and stale LAN export destinations instead of silently copying loopback', async () => {

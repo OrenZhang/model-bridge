@@ -10,13 +10,14 @@
   },
   "scripts": {
     "dev": "npm run build && node dist/cli.js",
-    "build": "tsc && tsc -p tsconfig.ui.json && node scripts/build-ui.mjs",
+    "build": "node scripts/build-installer.mjs && tsc && tsc -p tsconfig.ui.json && node scripts/build-ui.mjs",
     "icons": "node scripts/build-icons.mjs",
     "start": "node dist/cli.js",
     "desktop": "npm run build && electron .",
     "check": "tsc --noEmit && tsc -p tsconfig.ui.json",
     "test": "vitest run",
-    "package": "npm run build && electron-builder --publish never"
+    "package": "npm run build && electron-builder --publish never",
+    "pretest": "node scripts/build-installer.mjs"
   },
   "dependencies": {
     "@napi-rs/keyring": "^2.1.2",

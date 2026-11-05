@@ -59,10 +59,12 @@
     <div class="dialog-title"><h2>复制接入配置</h2><button class="icon-button" data-close="portable-dialog">×</button></div>
     <div class="portable-network"><label class="toggle"><input id="portable-lan" type="checkbox" />局域网访问</label><select id="portable-address" aria-label="配置中的服务地址"></select></div>
     <p id="portable-description" class="hint"></p>
-    <p id="portable-instructions" class="portable-instructions"></p>
+    <div class="portable-network"><label for="portable-platform">目标系统</label><select id="portable-platform"><option value="macos">macOS · 终端</option><option value="windows">Windows · PowerShell</option></select></div>
+    <p class="hint">复制脚本后粘贴执行，自动备份并合并配置、写入模型目录。需安装 Node.js 18+；保留其他设置和原始登录。</p>
+    <details><summary>手动配置说明</summary><p id="portable-instructions" class="portable-instructions"></p></details>
     <details class="portable-code"><summary>查看配置（密钥已隐藏）</summary><pre id="portable-preview"></pre></details>
     <p class="hint">复制或导出的配置包含本网关访问密钥，请仅分享给需要使用的成员。</p>
-    <div class="dialog-actions"><button class="secondary" data-portable="export">导出配置包</button><button id="portable-copy-catalog" class="secondary" data-portable="catalog">复制模型目录</button><button id="portable-copy-config" class="primary" data-portable="config">复制配置</button></div>
+    <div class="dialog-actions"><button class="secondary" data-portable="export">导出配置包</button><button id="portable-copy-catalog" class="secondary" data-portable="catalog">复制模型目录</button><button id="portable-copy-config" class="secondary" data-portable="config">复制配置</button><button class="primary" data-portable="script">复制执行脚本</button></div>
   </dialog>
   <script src="./app.js"></script>
 </body>

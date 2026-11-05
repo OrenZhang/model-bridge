@@ -131,6 +131,7 @@ async function observeGateway(gateway, route, metrics) {
       if (metrics.requests > 12) { json(res, 429, { error: { message: 'Validation request budget reached.' } }); return; }
       for (const item of Array.isArray(request.input) ? request.input : []) {
         if (item.type === 'reasoning' && item.encrypted_content?.startsWith('mb_r1.')) metrics.encryptedReasoningReplayed++;
+        if (item.type === 'reasoning' && item.encrypted_content && !item.encrypted_content.startsWith('mb_r1.')) metrics.nativeReasoningReplayed++;
         if (item.type === 'function_call_output') metrics.toolResultsReplayed++;
       }
     }
@@ -141,6 +142,7 @@ async function observeGateway(gateway, route, metrics) {
       if (data === '[DONE]') return;
       let value; try { value = JSON.parse(data); } catch { return; }
       if (value.type === 'response.output_item.done' && value.item?.type === 'reasoning' && value.item.encrypted_content?.startsWith('mb_r1.')) metrics.encryptedReasoningReceived++;
+      if (value.type === 'response.output_item.done' && value.item?.type === 'reasoning' && value.item.encrypted_content && !value.item.encrypted_content.startsWith('mb_r1.')) metrics.nativeReasoningReceived++;
       if (value.type === 'response.completed' && value.response?.usage) {
         const usage = value.response.usage;
         metrics.tokenUsage.input += usage.input_tokens ?? 0; metrics.tokenUsage.output += usage.output_tokens ?? 0;
@@ -154,10 +156,10 @@ async function observeGateway(gateway, route, metrics) {
 
 async function validateProvider(gateway, provider, route, catalog) {
   const metadata = routeMetadata[route];
-  if (!metadata || !['chat', 'messages'].includes(metadata.upstreamProtocol) || typeof metadata.upstreamHost !== 'string' || typeof metadata.upstreamModel !== 'string') { results.push({ provider, model: route, status: 'blocked', error: 'Cross-protocol validation requires selected-route metadata with upstreamHost, upstreamModel and upstreamProtocol chat/messages.' }); return; }
-  const metrics = { provider, model: route, upstreamHost: metadata.upstreamHost, upstreamModel: metadata.upstreamModel, upstreamProtocol: metadata.upstreamProtocol, downstreamProtocol: 'responses', validationKind: mock ? 'real-codex-simulated-upstream' : 'real-codex-live-gateway', gatewayHost: new URL(gateway.url).hostname, status: 'failed', turns: 0, toolCalls: 0, requests: 0, encryptedReasoningReceived: 0, encryptedReasoningReplayed: 0, toolResultsReplayed: 0, tokenUsage: { input: 0, output: 0, reasoning: 0 }, httpStatuses: [] };
+  if (!metadata || !['chat', 'messages', 'responses'].includes(metadata.upstreamProtocol) || typeof metadata.upstreamHost !== 'string' || typeof metadata.upstreamModel !== 'string') { results.push({ provider, model: route, status: 'blocked', error: 'Validation requires selected-route metadata with upstreamHost, upstreamModel and upstreamProtocol.' }); return; }
+  const metrics = { provider, model: route, upstreamHost: metadata.upstreamHost, upstreamModel: metadata.upstreamModel, upstreamProtocol: metadata.upstreamProtocol, downstreamProtocol: 'responses', validationKind: mock ? 'real-codex-simulated-upstream' : 'real-codex-live-gateway', gatewayHost: new URL(gateway.url).hostname, status: 'failed', turns: 0, toolCalls: 0, requests: 0, encryptedReasoningReceived: 0, encryptedReasoningReplayed: 0, nativeReasoningReceived: 0, nativeReasoningReplayed: 0, toolResultsReplayed: 0, tokenUsage: { input: 0, output: 0, reasoning: 0 }, httpStatuses: [] };
   results.push(metrics);
-  const folder = path.join(root, provider); const codexHome = path.join(folder, '.codex'); const workspace = path.join(folder, 'fixture');
+  const folder = path.join(root, provider + '-' + nonce()); const codexHome = path.join(folder, '.codex'); const workspace = path.join(folder, 'fixture');
   await mkdir(codexHome, { recursive: true, mode: 0o700 }); await mkdir(workspace, { recursive: true, mode: 0o700 });
   const address = await observeGateway(gateway, route, metrics);
   const catalogFile = path.join(codexHome, 'codex-models.json');
@@ -217,7 +219,7 @@ async function validateProvider(gateway, provider, route, catalog) {
       } finally { clearTimeout(timer); currentTurn = undefined; }
     }
     assert(metrics.toolCalls >= 3, 'Expected write and two read tool calls.');
-    assert(metrics.encryptedReasoningReceived > 0 && metrics.encryptedReasoningReplayed > 0, 'Opaque reasoning did not round-trip through the real Codex client.');
+    if (metadata.upstreamProtocol !== 'responses') assert(metrics.encryptedReasoningReceived > 0 && metrics.encryptedReasoningReplayed > 0, 'Opaque reasoning did not round-trip through the real Codex client.');
     assert(metrics.toolResultsReplayed >= 3, 'Codex did not replay all tool outputs.');
     if (mock) { metrics.upstreamThinkingReplayChecks = gateway.replayChecks[provider]; assert(metrics.upstreamThinkingReplayChecks >= 4, 'Original thinking/signatures were not restored upstream.'); }
     metrics.status = 'passed';
@@ -242,8 +244,10 @@ try {
   if (!gateway.url || !gateway.key) throw new Error('Live validation needs MODEL_BRIDGE_TEST_GATEWAY_URL and MODEL_BRIDGE_TEST_GATEWAY_KEY from a configured gateway; no credential values should be pasted into chat.');
   const headers = { authorization: `Bearer ${gateway.key}` };
   const [models, catalog] = await Promise.all(['/v1/models', '/codex/models'].map(async endpoint => { const response = await fetch(gateway.url + endpoint, { headers, signal: AbortSignal.timeout(10000) }); assert(response.ok, `Gateway catalog returned HTTP ${response.status}.`); return response.json(); }));
-  for (const provider of ['kimi', 'minimax']) {
-    const route = process.env[`MODEL_BRIDGE_${provider.toUpperCase()}_MODEL_ROUTE`] ?? models.data.find(model => model.owned_by === provider)?.id;
+  const selected = process.env.MODEL_BRIDGE_VALIDATION_ROUTES ? JSON.parse(process.env.MODEL_BRIDGE_VALIDATION_ROUTES) : ['kimi', 'minimax'].map(provider => ({provider, route: process.env[`MODEL_BRIDGE_${provider.toUpperCase()}_MODEL_ROUTE`] ?? models.data.find(model => model.owned_by === provider)?.id}));
+  assert(Array.isArray(selected) && selected.length > 0 && selected.length <= 8, 'Select between one and eight model routes.');
+  for (const {provider, route} of selected) {
+    assert(typeof provider === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(provider), 'Invalid provider label.');
     if (!route) { results.push({ provider, status: 'blocked', error: 'No configured model for this provider.', validationKind: 'real-codex-live-gateway' }); continue; }
     await validateProvider(gateway, provider, route, catalog);
   }
@@ -263,5 +267,5 @@ finally {
     cleanupErrors.push(new Error(`Could not remove validation directory ${root} after bounded retries.`, { cause: error }));
   }
   if (cleanupErrors.length) throw new AggregateError(cleanupErrors, 'Validation cleanup failed.');
-  if (results.some(result => result.status !== 'passed') || results.length !== 2) { process.stderr.write('Validation incomplete; inspect the metadata report. Simulated upstreams are never reported as live-provider verification.\n'); process.exitCode = 1; }
+  if (results.some(result => result.status !== 'passed') || !results.length) { process.stderr.write('Validation incomplete; inspect the metadata report. Simulated upstreams are never reported as live-provider verification.\n'); process.exitCode = 1; }
 }

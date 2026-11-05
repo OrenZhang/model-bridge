@@ -116,9 +116,9 @@ else {
             const bundle = active.clients.portable(client, active.store.get(), address, await active.ensureClient(client));
             if (operation === 'client.portable-preview') return { client, address: bundle.address, filename: bundle.filename, preview: bundle.preview, requiresCatalog: !!bundle.catalog, filenames: Object.keys(bundle.files), instructions: bundle.instructions };
             if (operation === 'client.copy-portable') {
-              const part = z.enum(['config', 'catalog']).parse(payload.part);
+              const part = z.enum(['config', 'catalog', 'macos', 'windows']).parse(payload.part);
               if (part === 'catalog' && !bundle.catalog) throw new Error('此客户端不需要单独的模型目录。');
-              const { clipboard } = await import('electron'); clipboard.writeText(part === 'catalog' ? bundle.catalog! : bundle.configuration); return true;
+              const { clipboard } = await import('electron'); clipboard.writeText(part === 'catalog' ? bundle.catalog! : part === 'config' ? bundle.configuration : bundle.scripts[part]); return true;
             }
             const result = await dialog.showSaveDialog(window!, { defaultPath: `${client}-model-bridge.zip`, filters: [{ name: '客户端配置与模型目录', extensions: ['zip'] }] });
             if (result.canceled || !result.filePath) return false;

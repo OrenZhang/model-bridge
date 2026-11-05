@@ -234,11 +234,11 @@ document.addEventListener('click', event => {
       if (operation === 'discover') await action('connection.discover', { id }, '模型目录已同步');
       if (operation === 'login') { $<HTMLDialogElement>('#connection-dialog').close(); activeLogin = id; $<HTMLDialogElement>('#login-dialog').showModal(); updateLogin(); await action('device.login', { id }); }
       if (operation === 'delete' && confirm('移除此连接及其模型？此账号的已有对话将不可继续。')) { await action('connection.delete', { id }, '连接已移除'); $<HTMLDialogElement>('#connection-dialog').close(); }
-      if (operation === 'portable-config') { portableClient = clientTab; portableAddress = ''; $<HTMLDialogElement>('#portable-dialog').showModal(); await updatePortableConfig(); }
+      if (operation === 'portable-config') { portableClient = clientTab; portableAddress = ''; $<HTMLSelectElement>('#portable-platform').value = navigator.userAgent.includes('Windows') ? 'windows' : 'macos'; $<HTMLDialogElement>('#portable-dialog').showModal(); await updatePortableConfig(); }
       if (target.dataset.portable) {
         const payload = { client: portableClient, address: portableAddress };
         if (target.dataset.portable === 'export') { if (await call('client.export-portable', payload)) toast('配置包已导出'); }
-        else { await call('client.copy-portable', { ...payload, part: target.dataset.portable }); toast('已复制，配置包含本网关访问密钥'); }
+        else { await call('client.copy-portable', { ...payload, part: target.dataset.portable === 'script' ? $<HTMLSelectElement>('#portable-platform').value : target.dataset.portable }); toast('已复制，配置包含本网关访问密钥'); }
       }
       if (operation === 'use-gateway' || operation === 'use-original') {
         if (clientBusy) return;
