@@ -2,6 +2,8 @@
 
 日期：2026-11-05。本机现有 ChatGPT 登录账号，通过实际局域网网卡地址访问正在运行的 Model Bridge。没有修改当前 Codex / Claude Code 客户端配置；HTTP 测试前后文件哈希一致，CLI 使用临时 CODEX_HOME 和合成工具。
 
+此记录对应最初的简洁名称版本；后续按用户确认，已改为同名模型跨通道合并，当前行为以 README 和局域网矩阵验证记录为准。
+
 ## 问题与修复
 
 原客户端通过 Chat Completions 发送 temperature 和 max_tokens。网关虽转为 Responses，但仍携带 temperature / max_output_tokens，ChatGPT 订阅上游返回 HTTP 400；同一路由去掉这些参数则返回 200。网关现按 ChatGPT 订阅的窄版 Responses 规则适配：强制 stream=true、store=false，剔除不支持的采样与输出上限等字段，将 system 消息转为 developer，保留完整历史、工具和推理项。该订阅通道无法保证采样和 token 上限参数生效；API Key 通道不做此项过滤。HTTP previous_response_id / conversation 和后台任务返回明确错误，要求客户端携带完整历史。

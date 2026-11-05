@@ -2,7 +2,7 @@ import { PoolRouter } from './pool-router.js';
 import { kimiSubscriptionThinking } from '../auth/kimi-models.js';
 import { chatgptPayload } from '../auth/chatgpt-payload.js';
 import { minimaxSubscriptionThinking } from '../auth/minimax-thinking.js';
-import { modelGroupId, poolCandidates, reasoningScope } from '../core/model-pool.js';
+import { mergedModelId, modelGroupId, poolCandidates, reasoningScope } from '../core/model-pool.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -87,7 +87,8 @@ export async function startGateway(options: GatewayOptions) {
       selected = input.model;
       const candidates = poolCandidates(options.config(), selected);
       const session = req.headers['x-model-bridge-session'] ?? req.headers['session_id'] ?? input.metadata?.user_id;
-      route = candidates?.length ? await poolRouter.select(modelGroupId(candidates[0]!.connection,candidates[0]!.model), candidates, input, clientId, protocol, reasoningVault, typeof session === 'string' ? session : undefined) : resolveRoute(options.config(), selected);
+      const previousPools = candidates?.length ? options.config().connections.flatMap(connection=>connection.models.filter(model=>model.upstreamId===candidates[0]!.model.upstreamId).map(model=>modelGroupId(connection,model))) : [];
+      route = candidates?.length ? await poolRouter.select(mergedModelId(candidates[0]!.model.upstreamId), candidates, input, clientId, protocol, reasoningVault, typeof session === 'string' ? session : undefined, [...new Set(previousPools)]) : resolveRoute(options.config(), selected);
       const { connection, model } = route;
       if (input.tools?.length && !model.tools) throw new BridgeError(400, 'tools_unsupported', 'This model does not support tool calls.');
       const upstream = model.protocols.includes(protocol) ? protocol : model.protocols[0]!;

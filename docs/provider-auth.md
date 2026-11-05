@@ -9,7 +9,7 @@ Kimi 和 MiniMax 在“添加连接”中提供“登录新账号 / API Key”�
 | MiniMax Code Token Plan | 官方设备授权、PKCE S256，自动刷新 | 同区域 agent-backend 的 Messages 通道 |
 | MiniMax 开放平台 / Coding Plan | API Key | 用户配置的开放平台接口，例如 Anthropic 兼容接口 |
 
-MiniMax Code 的 OAuth audience 为 `agent-backend`，scope 为 `agent.default`。它的账号令牌不能用于 `api.minimax.*` 开放平台。订阅账号连接限定官方区域模型地址，API Key 连接单独配置，池化不会混合这两种计费来源。
+MiniMax Code 的 OAuth audience 为 `agent-backend`，scope 为 `agent.default`。它的账号令牌不能用于 `api.minimax.*` 开放平台。订阅账号连接限定官方区域模型地址，API Key 连接单独配置。按当前统一分发规则，原始模型 ID 完全相同的订阅和 API Key 通道会合并分发，使用量计入实际选中通道对应的套餐或 API。
 
 ACP 是 Agent 会话协议，不等于模型认证协议。当前实现直接复用服务商公开的 OAuth 与模型 HTTP 协议，向 Codex 提供统一模型接口；没有在 Codex 背后启动另一个 ACP Agent 执行工具。工具仍由请求客户端执行。
 

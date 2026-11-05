@@ -1,4 +1,4 @@
-import { catalogRoutes, modelGroupId, publicModelRoutes } from './model-pool.js';
+import { publicModelRoutes } from './model-pool.js';
 import { type Config } from './config.js';
 
 const instructions = 'You are a coding assistant. Follow the user and developer instructions. Inspect relevant files before changing them. Use the provided tools and report results accurately.';
@@ -8,10 +8,9 @@ export function models(config: Config) {
 export function managedModels(config: Config) {
   const all = structuredClone(config);
   for (const connection of all.connections) { connection.enabled = true; for (const model of connection.models) model.enabled = true; }
-  return catalogRoutes(all).map(entry => {
-    const group = modelGroupId(entry.connection, entry.model);
+  return publicModelRoutes(all).map(entry => {
     // Include duplicate account imports too: hiding a model must hide every route.
-    const members = config.connections.flatMap(connection => connection.models.filter(model => modelGroupId(connection, model) === group).map(model => ({connection, model})));
+    const members = config.connections.flatMap(connection => connection.models.filter(model => model.upstreamId === entry.id).map(model => ({connection, model})));
     return { ...entry, members, enabled: members.every(m => m.model.enabled), mixed: members.some(m => m.model.enabled) && members.some(m => !m.model.enabled), exposedAccounts: members.filter(m => m.connection.enabled && m.model.enabled).length };
   });
 }

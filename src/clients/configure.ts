@@ -121,8 +121,8 @@ export class ClientConfiguration {
       canRestore ||= validBackup && isBridge;
       if (isBridge) {
         const selected = models(config).find(entry => matchesModel(entry,selectedModel));
-        return { client, mode: 'bridge', serviceName: selected?.connection.name ?? (selectedModel ? '原服务已移除或停用' : '统一模型（未选择默认模型）'), ...(selectedModel ? { model: selectedModel } : {}),
-          ...(selected ? { connectionId: selected.connection.id } : {}), modelAvailable: !!selected, canRestore };
+        return { client, mode: 'bridge', serviceName: selected ? selected.members.length>1 ? '统一模型' : selected.connection.name : (selectedModel ? '原服务已移除或停用' : '统一模型（未选择默认模型）'), ...(selectedModel ? { model: selectedModel } : {}),
+          ...(selected?.members.length===1 ? { connectionId: selected.connection.id } : {}), modelAvailable: !!selected, canRestore };
       }
       const native = client === 'codex' ? (!existing.model_provider || existing.model_provider === 'openai') && !baseUrl : !baseUrl;
       return { client, mode: 'external', serviceName: native ? defaultName : '外部服务',

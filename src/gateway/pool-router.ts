@@ -23,6 +23,19 @@ function sessionIdentity(input: any, session?: string) {
   const content = typeof first === 'string' ? [{ type: 'text', text: first }] : Array.isArray(first) ? first.map((part: any) => ['text', 'input_text', 'output_text'].includes(part.type) ? { type: 'text', text: part.text } : part) : first;
   return ['first-user', content];
 }
+function supportsRequest(route: ModelRoute, input: any) {
+  const model = route.model;
+  if (input.tools?.length && !model.tools) return false;
+  const messages = Array.isArray(input.input) ? input.input : input.messages;
+  if (messages?.some?.((m:any)=>m.content?.some?.((p:any)=>['image','input_image','image_url'].includes(p.type))) && !model.images) return false;
+  const effort = input.reasoning?.effort ?? input.reasoning_effort ?? input.output_config?.effort ?? input.thinking?.effort;
+  const off = effort === 'none' || input.thinking?.type === 'disabled';
+  if (off && model.thinking?.mode === 'only') return false;
+  if (!off && (effort || input.thinking?.type === 'enabled' || input.thinking?.type === 'adaptive') && model.thinking?.mode === 'none') return false;
+  if (effort && !off && model.thinking?.efforts.length && !model.thinking.efforts.includes(effort)) return false;
+  if (effort && model.reasoning.length && !model.reasoning.includes(effort)) return false;
+  return true;
+}
 export class PoolRouter {
   private state: State = { version: 1, cursor: {}, bindings: {} };
   private changes: Promise<unknown> = Promise.resolve();
@@ -33,11 +46,14 @@ export class PoolRouter {
     catch (error: any) { if (error.code !== 'ENOENT') throw new Error('Model pool routing state is invalid. Restore pool-routing.json before continuing existing conversations.'); }
     return this;
   }
-  select(pool: string, candidates: ModelRoute[], input: any, client: string, protocol: Protocol, vault: ReasoningVault, session?: string) {
+  select(pool: string, candidates: ModelRoute[], input: any, client: string, protocol: Protocol, vault: ReasoningVault, session?: string, previousPools: string[] = []) {
     const operation = this.changes.then(async () => {
       const key = digest(JSON.stringify([client, pool, sessionIdentity(input, session)]));
       const tokens = envelopes(input);
-      const bound = this.state.bindings[key];
+      const currentBound = this.state.bindings[key];
+      const previous = previousPools.map(old=>this.state.bindings[digest(JSON.stringify([client,old,sessionIdentity(input,session)]))]).filter(Boolean);
+      if (!currentBound && new Set(previous.map(b=>JSON.stringify([b!.connectionId,b!.fingerprint]))).size>1) throw new BridgeError(409,'pool_history_ambiguous','Multiple previous channels match this session. Start a new conversation.');
+      const bound = currentBound ?? previous[0];
       let selected: ModelRoute | undefined;
       if (bound) {
         selected = candidates.find(r => r.connection.id === bound.connectionId && routeFingerprint(r) === bound.fingerprint);
@@ -58,19 +74,22 @@ export class PoolRouter {
         // Never send that state to an account chosen as if this were a new chat.
         const history = Array.isArray(input.input) ? input.input : input.messages;
         if (input.previous_response_id || input.conversation || history?.some?.((m: any) => ['assistant', 'tool'].includes(m.role) || ['reasoning', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output'].includes(m.type))) throw new BridgeError(409, 'pool_history_unbound', 'Cannot identify the original account for this conversation. Start a new conversation.');
-        const available = candidates.filter(r => (this.cooldown.get(r.connection.id) ?? 0) <= Date.now()).sort((a, b) => a.connection.id.localeCompare(b.connection.id));
+        const compatible = candidates.filter(r=>supportsRequest(r,input));
+        if (!compatible.length) throw new BridgeError(400,'model_capability_unavailable','No enabled channel supports the requested tools, images or thinking level.');
+        const available = compatible.filter(r => (this.cooldown.get(r.connection.id) ?? 0) <= Date.now()).sort((a, b) => a.connection.id.localeCompare(b.connection.id));
         if (!available.length) throw new BridgeError(503, 'pool_accounts_cooling_down', 'All accounts are temporarily unavailable. Retry later.');
         const cursor = this.state.cursor[pool] ?? 0;
         selected = available[cursor % available.length]!;
       }
+      if (!supportsRequest(selected,input)) throw new BridgeError(400,'model_capability_unavailable','The original channel does not support this request. Start a new conversation to select another channel.');
       if ((this.cooldown.get(selected.connection.id) ?? 0) > Date.now()) throw new BridgeError(429, 'pool_account_cooling_down', 'The original account is temporarily unavailable. Retry this conversation later.');
-      if (!bound) {
+      if (!currentBound) {
         const next = structuredClone(this.state);
         // Never evict an older binding: clients may resume a compacted history
         // containing only the latest user turn, which looks like a new chat.
         if (Object.keys(next.bindings).length >= 10000) throw new BridgeError(503, 'pool_capacity_reached', 'The model pool conversation limit has been reached. Preserve existing routing records before maintenance.');
         next.bindings[key] = { connectionId: selected.connection.id, fingerprint: routeFingerprint(selected), updatedAt: Date.now() };
-        if (!tokens.length) next.cursor[pool] = ((next.cursor[pool] ?? 0) + 1) % 1000000000;
+        if (!bound && !tokens.length) next.cursor[pool] = ((next.cursor[pool] ?? 0) + 1) % 1000000000;
         if (this.file) await atomicWrite(this.file, JSON.stringify(next));
         this.state = next;
       }

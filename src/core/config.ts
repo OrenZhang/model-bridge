@@ -84,7 +84,7 @@ export function resolveRoute(config: Config, id: string) {
     if (model) return { connection: structuredClone(connection), model: structuredClone(model) };
   }
   const named = publicModelRoutes(config).find(route => route.id === id);
-  if (named) return {connection:structuredClone(named.connection),model:structuredClone(named.model)};
+  if (named) return structuredClone(named.members[0]!);
   throw new BridgeError(404, 'model_not_found', 'Model is unavailable. Refresh the model list and select an enabled model.');
 }
 export class BridgeError extends Error {
