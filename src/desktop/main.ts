@@ -47,7 +47,8 @@ else {
       openInstaller: async file => { const error = await shell.openPath(file); if (error) throw new Error(error); },
       installAndRestart: async () => {
         if (active.gateway.activeRequests()) throw new Error('仍有模型请求进行中，请等待完成后再安装更新。');
-        await active.close(); updates?.close(); clearInterval(updateTimer); quitting = true;
+        // Use the normal before-quit handler to drain the gateway. If launching
+        // the installer fails, keep the running gateway and the retry UI alive.
         autoUpdater.quitAndInstall(false, true);
       },
       changed: state => { if (window && !window.isDestroyed()) window.webContents.send('model-bridge-update', state); },

@@ -32,3 +32,10 @@ it('blocks missing installer assets', async () => {
   const f = await fixture(); const name = await architecture(f.input, 'arm64'); await rm(path.join(f.input, 'arm64', name));
   await expect(mergeReleaseUpdates(f.input, f.output)).rejects.toThrow('Missing release asset');
 });
+it('publishes a preview-channel alias when GitHub builds emit only latest metadata', async () => {
+  const f = await fixture(); await architecture(f.input, 'arm64');
+  const dir = path.join(f.input, 'arm64'); const info = await readFile(path.join(dir, 'alpha-mac.yml'), 'utf8');
+  await rm(path.join(dir, 'alpha-mac.yml')); await writeFile(path.join(dir, 'latest-mac.yml'), info);
+  expect(await mergeReleaseUpdates(f.input, f.output)).toEqual({ packages: 1, manifests: 2 });
+  expect(await readFile(path.join(f.output, 'alpha-mac.yml'), 'utf8')).toBe(await readFile(path.join(f.output, 'latest-mac.yml'), 'utf8'));
+});

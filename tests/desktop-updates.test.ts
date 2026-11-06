@@ -73,3 +73,14 @@ it('rejects mismatched architecture, unsafe asset paths and missing checksum met
   expect(() => macInstaller({ ...release, version: '../setup' }, 'arm64')).toThrow('版本');
   expect(() => macInstaller({ ...release, files: [{ ...release.files[0]!, sha512: '' }] }, 'arm64')).toThrow('校验');
 });
+it('reports installer launch errors from the engine without disabling retry', async () => {
+  const f = await fixture('win32'); await f.updates.check(); await f.updates.download();
+  f.installAndRestart.mockImplementationOnce(async () => { f.engine.emit('error', new Error('Installer launch failed')); });
+  await f.updates.install(); expect(f.updates.snapshot()).toMatchObject({ phase: 'error', retry: 'install', message: 'Installer launch failed' });
+  await f.updates.install(); expect(f.installAndRestart).toHaveBeenCalledTimes(2);
+});
+it('does not offer a same-version or older release for download', async () => {
+  const f = await fixture();
+  f.engine.checkForUpdates.mockImplementationOnce(async () => { f.engine.emit('update-available', { ...release, version: '0.1.0-alpha.1' }); return {}; });
+  await f.updates.check(); expect(f.updates.snapshot().phase).toBe('current'); await f.updates.download(); expect(f.fetch).not.toHaveBeenCalled();
+});

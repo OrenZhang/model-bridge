@@ -4,6 +4,7 @@ import { parse, stringify } from 'yaml';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
+import { prerelease } from 'semver';
 
 export async function mergeReleaseUpdates(input, output) {
   await mkdir(output, { recursive: true });
@@ -27,6 +28,15 @@ export async function mergeReleaseUpdates(input, output) {
     } else if (/\.(dmg|zip|exe|AppImage|deb|blockmap)$/.test(entry.name)) {
       if (packages.has(entry.name)) throw new Error(`Duplicate release asset: ${entry.name}`);
       await copyFile(source, path.join(output, entry.name)); packages.add(entry.name);
+    }
+  }
+  // GitHub builds may emit only latest*.yml. Publish a matching preview alias
+  // so alpha/beta clients can resolve their channel without a 404 fallback.
+  for (const [name, manifest] of [...manifests]) {
+    const channel = prerelease(manifest.version)?.[0];
+    if (channel === 'alpha' || channel === 'beta') {
+      const alias = name.replace(/^(latest|alpha|beta)/, channel);
+      if (!manifests.has(alias)) manifests.set(alias, manifest);
     }
   }
   for (const [name, manifest] of manifests) {

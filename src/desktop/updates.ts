@@ -55,15 +55,20 @@ export class DesktopUpdates {
     engine.autoDownload = false; engine.autoInstallOnAppQuit = false;
     engine.allowPrerelease = !!prerelease(options.version); engine.allowDowngrade = false;
     engine.on('update-available', (info: ReleaseInfo) => {
-      if (this.closed || !valid(info.version) || !gt(info.version, options.version)) return;
+      if (this.closed) return;
+      if (!valid(info.version)) { this.fail(new Error('发布版本信息无效。'), 'check'); return; }
+      if (!gt(info.version, options.version)) { this.info = undefined; this.set({ phase: 'current', latestVersion: undefined, notes: undefined }); return; }
       this.info = info;
       const notes = typeof info.releaseNotes === 'string' ? info.releaseNotes : info.releaseNotes?.map(n => n.note ?? '').join('\n\n') ?? '';
       this.set({ phase: 'available', latestVersion: info.version, notes: notes.slice(0, 20000), message: undefined, retry: undefined, percent: undefined });
     });
-    engine.on('update-not-available', () => this.set({ phase: 'current', checkedAt: new Date().toISOString(), message: undefined, retry: undefined }));
+    engine.on('update-not-available', () => { this.info = undefined; this.set({ phase: 'current', latestVersion: undefined, notes: undefined, checkedAt: new Date().toISOString(), message: undefined, retry: undefined }); });
     engine.on('download-progress', progress => this.set({ phase: 'downloading', percent: progress.percent, transferred: progress.transferred, total: progress.total }));
     engine.on('update-downloaded', () => { if (this.state.installMode === 'restart') this.set({ phase: 'downloaded', percent: 100 }); });
-    engine.on('error', () => { /* Awaited check/download calls own the error and retry state. */ });
+    engine.on('error', error => {
+      if (this.state.phase === 'installing') this.fail(error, 'install');
+      // Awaited check/download calls own their errors and retry state.
+    });
   }
   snapshot() { return { ...this.state }; }
   private set(update: Partial<UpdateState>) {
