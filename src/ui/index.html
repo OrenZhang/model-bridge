@@ -17,7 +17,7 @@
       <button data-page="overview"><span>⇄</span>对外服务</button>
       <button data-page="usage"><span>▥</span>用量</button>
     </nav>
-    <div class="sidebar-bottom"><div class="local-badge"><i></i> 网关运行中</div><small>v0.1.0 · ALPHA</small></div>
+    <div class="sidebar-bottom"><div class="local-badge"><i></i> 网关运行中</div><button class="plain" id="app-version" data-action="open-updates" aria-label="检查客户端更新">版本更新</button></div>
   </aside>
   <main><header><div><h1 id="page-title">总览</h1></div><div id="service-status" class="status"><i></i> 正在连接网关</div></header><div id="content"><div class="empty">正在读取本地服务…</div></div></main>
   <div id="toast" role="status" hidden></div>
@@ -68,6 +68,10 @@
     <details class="portable-code"><summary>查看配置（密钥已隐藏）</summary><pre id="portable-preview"></pre></details>
     <p class="hint">复制或导出的配置包含本网关访问密钥，请仅分享给需要使用的成员。</p><p id="portable-feedback" class="hint" role="status" aria-live="polite"></p>
     <div class="dialog-actions"><button class="secondary" data-portable="export">导出配置包</button><button id="portable-copy-catalog" class="secondary" data-portable="catalog">复制模型目录</button><button id="portable-copy-config" class="secondary" data-portable="config">复制配置</button><button class="primary" data-portable="script">复制执行脚本</button></div>
+  </dialog>
+  <dialog id="update-dialog" aria-labelledby="update-title">
+    <div class="dialog-title"><h2 id="update-title">版本更新</h2><button class="icon-button" data-close="update-dialog" aria-label="关闭版本更新">×</button></div>
+    <div id="update-content" aria-live="polite"></div>
   </dialog>
   <script src="./app.js"></script>
 </body>

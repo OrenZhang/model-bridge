@@ -1,5 +1,7 @@
 import { managedModels, models } from '../core/catalog.js';
-import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage, net } from 'electron';
+import electronUpdater from 'electron-updater';
+import { DesktopUpdates, RELEASES_URL } from './updates.js';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -15,11 +17,13 @@ import { z } from 'zod';
 const directory = path.dirname(fileURLToPath(import.meta.url));
 app.setName('Model Bridge');
 let runtime: Runtime | undefined; let window: BrowserWindow | undefined; let tray: Tray | undefined; let quitting = false;
+let updates: DesktopUpdates | undefined;
+let updateTimer: ReturnType<typeof setInterval> | undefined;
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { window?.show(); window?.focus(); });
   app.on('activate', () => window?.show());
-  app.on('before-quit', event => { if (quitting) return; event.preventDefault(); quitting = true; void runtime?.close().finally(() => app.quit()); if (!runtime) app.quit(); });
+  app.on('before-quit', event => { if (quitting) return; event.preventDefault(); quitting = true; updates?.close(); clearInterval(updateTimer); void runtime?.close().finally(() => app.quit()); if (!runtime) app.quit(); });
   void app.whenReady().then(async () => {
   try {
     const applicationIcon = nativeImage.createFromPath(path.join(app.getAppPath(), 'assets', 'icon.png'));
@@ -36,11 +40,27 @@ else {
     }, process.env.MODEL_BRIDGE_CODEX_BINARY);
     for (const client of ['codex', 'claude', 'generic'] as const) await runtime.ensureClient(client);
     const active = runtime;
+    const { autoUpdater } = electronUpdater;
+    updates = new DesktopUpdates({ version: app.getVersion(), packaged: app.isPackaged, platform: process.platform, arch: process.arch,
+      directory: path.join(data, 'updates'), engine: autoUpdater,
+      fetch: (url, init) => net.fetch(url, init),
+      openInstaller: async file => { const error = await shell.openPath(file); if (error) throw new Error(error); },
+      installAndRestart: async () => {
+        if (active.gateway.activeRequests()) throw new Error('仍有模型请求进行中，请等待完成后再安装更新。');
+        await active.close(); updates?.close(); clearInterval(updateTimer); quitting = true;
+        autoUpdater.quitAndInstall(false, true);
+      },
+      changed: state => { if (window && !window.isDestroyed()) window.webContents.send('model-bridge-update', state); },
+    });
     void active.localAccounts.scan();
     ipcMain.handle('model-bridge', async (event, operation: string, payload: any) => {
       if (event.sender !== window?.webContents || event.senderFrame !== window?.webContents.mainFrame) throw new Error('Invalid sender.');
       try {
         switch (operation) {
+          case 'update.check': await updates!.check(); return updates!.snapshot();
+          case 'update.download': void updates!.download(); return updates!.snapshot();
+          case 'update.install': await updates!.install(); return updates!.snapshot();
+          case 'update.releases': await shell.openExternal(RELEASES_URL); return true;
           case 'state': {
             const days = z.number().int().min(1).max(USAGE_RETENTION_DAYS).parse(payload?.days ?? USAGE_RETENTION_DAYS);
             const filters = z.object({ clientId: z.string().optional(), provider: z.string().optional(), connectionId: z.string().optional(), model: z.string().optional() }).parse(payload?.filters ?? {});
@@ -49,7 +69,7 @@ else {
             const view=usageView(records,filters,days);
             const [codex, claude] = await Promise.all(['codex', 'claude'].map(client => active.clients.status(client as 'codex' | 'claude', config, address)));
             const modelCatalog = models(config).map(entry => ({ id: entry.id, name: entry.model.name, provider: entry.connection.provider, tools: entry.model.tools, members: entry.members.map(r => ({ connectionId: r.connection.id, modelId: r.model.id, name: r.connection.name, model: r.model.upstreamId })) }));
-            return { config, accessKeys:config.clients.filter(c=>!['codex','claude','generic'].includes(c.id)).map(c=>({id:c.id,name:c.name,enabled:c.enabled,...usageSummary(records.filter(r=>r.clientId===c.id))})), address, modelCatalog, managedModels: managedModels(config).map(entry => ({ id: entry.id, name: entry.model.name, provider: entry.connection.provider, enabled: entry.enabled, mixed: entry.mixed, exposedAccounts: entry.exposedAccounts, members: entry.members.map(m => ({connectionId:m.connection.id,modelId:m.model.id,name:m.connection.name,model:m.model.upstreamId})) })), clientStatuses: { codex, claude }, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), connectionChecks: active.connectionStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...view,usageOptions:{...view.usageOptions,clientId:[...new Set([...(view.usageOptions.clientId??[]),...config.clients.map(c=>c.id)])]}, usageWriteFailed: active.usageWriteFailed() };
+            return { config, update: updates!.snapshot(), accessKeys:config.clients.filter(c=>!['codex','claude','generic'].includes(c.id)).map(c=>({id:c.id,name:c.name,enabled:c.enabled,...usageSummary(records.filter(r=>r.clientId===c.id))})), address, modelCatalog, managedModels: managedModels(config).map(entry => ({ id: entry.id, name: entry.model.name, provider: entry.connection.provider, enabled: entry.enabled, mixed: entry.mixed, exposedAccounts: entry.exposedAccounts, members: entry.members.map(m => ({connectionId:m.connection.id,modelId:m.model.id,name:m.connection.name,model:m.model.upstreamId})) })), clientStatuses: { codex, claude }, lanAddresses: active.gateway.lanAddresses(), managedNetworks: active.managed.overview(), logins: active.loginStates(), connectionChecks: active.connectionStates(), discoveries: active.discoveryStates(), localAccounts: active.localAccounts.list(), ...view,usageOptions:{...view.usageOptions,clientId:[...new Set([...(view.usageOptions.clientId??[]),...config.clients.map(c=>c.id)])]}, usageWriteFailed: active.usageWriteFailed() };
           }
           case 'connection.save': return active.saveConnection(payload.connection, payload.apiKey ? z.string().max(20000).parse(payload.apiKey) : undefined, payload.autoDiscover !== false);
           case 'model.exposure': return active.setModelExposure(z.string().parse(payload.id), z.boolean().parse(payload.enabled));
@@ -171,6 +191,10 @@ else {
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.on('close', event => { if (!quitting) { event.preventDefault(); window?.hide(); } });
     await window.loadFile(path.join(directory, '../ui/index.html'));
+    if (app.isPackaged) {
+      void updates.check();
+      updateTimer = setInterval(() => { void updates?.check(); }, 6 * 60 * 60 * 1000).unref();
+    }
     const pixels = Buffer.alloc(16 * 16 * 4);
     for (let y = 3; y < 14; y++) for (let x = 2; x < 14; x++) {
       if (x < 5 || x > 10 || y < 6 || (x > 6 && x < 9 && y < 11)) {

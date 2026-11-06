@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="330" viewBox="0 0 1000 330" role="img" aria-labelledby="title desc">
+  <title id="title">Model Bridge：一个接口连接多个模型服务</title>
+  <desc id="desc">Codex、Claude Code、其他 Agent 通过 Responses、Messages 或 Chat Completions 接入 Model Bridge，由网关统一认证、转换协议并按模型分发到不同服务商。</desc>
+  <rect width="1000" height="330" rx="16" fill="#f6f7f9"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif" font-size="16" fill="#252a30">
+    <text x="32" y="42" font-size="14" fill="#727982">你的客户端</text><text x="748" y="42" font-size="14" fill="#727982">你的账号与 API 服务</text>
+    <g fill="#fff" stroke="#dfe4e9"><rect x="32" y="68" width="216" height="56" rx="8"/><rect x="32" y="144" width="216" height="56" rx="8"/><rect x="32" y="220" width="216" height="56" rx="8"/><rect x="748" y="68" width="220" height="56" rx="8"/><rect x="748" y="144" width="220" height="56" rx="8"/><rect x="748" y="220" width="220" height="56" rx="8"/></g>
+    <text x="48" y="101">Codex Desktop / CLI</text><text x="48" y="177">Claude Code</text><text x="48" y="253">其他 Agent</text>
+    <text x="764" y="101">ChatGPT / OpenAI</text><text x="764" y="177">Kimi / MiniMax</text><text x="764" y="253">DeepSeek / 兼容 API</text>
+    <g fill="none" stroke="#acb8be" stroke-width="1.5"><path d="M248 96h40v76h72M248 172h112M248 248h40v-76M640 172h72V96h36M640 172h108M712 172v76h36"/></g>
+    <rect x="360" y="68" width="280" height="208" rx="12" fill="#fff" stroke="#c8d7d0"/>
+    <rect x="360" y="68" width="4" height="208" rx="2" fill="#2b6050"/>
+    <text x="386" y="108" font-size="23" font-weight="600">Model Bridge</text>
+    <text x="386" y="137" font-size="14" fill="#727982">同一个接口，按模型分发</text>
+    <path d="M386 154h228" stroke="#e4e7eb"/>
+    <text x="386" y="181" font-size="14">统一认证 · 协议转换</text><text x="386" y="208" font-size="14">同名合并 · 多账号轮询</text><text x="386" y="247" font-size="12" fill="#727982">Responses / Messages / Chat</text>
+    <text x="32" y="308" font-size="12" fill="#727982">在本机运行，也可使用独立 Key 向局域网提供服务</text>
+  </g>
+</svg>

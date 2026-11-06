@@ -22,6 +22,11 @@ nav button.active{background:#fff;border-color:var(--line);color:var(--ink)}
 .sidebar-bottom{margin-top:auto;border-top:1px solid var(--line);padding:17px 8px 0;display:grid;gap:12px;font-size:11px;color:var(--muted)}
 .sidebar-bottom .plain{padding:0;text-align:left;font-size:11px}
 .sidebar-bottom small{font-size:10px;color:#8b939c}
+.update-version{display:flex;align-items:center;gap:12px;color:var(--muted)}
+.update-version code{color:var(--ink)}
+.update-progress{width:100%;height:8px;accent-color:var(--accent)}
+.update-notes{margin:20px 0}
+.update-notes pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px;line-height:1.7;font-family:inherit}
 .local-badge i,.status i{display:inline-block;width:6px;height:6px;margin-right:6px;border-radius:50%;background:#56836a}
 main{margin-left:184px;padding:30px 34px;max-width:1450px}
 header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:23px}

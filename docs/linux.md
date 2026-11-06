@@ -1,6 +1,6 @@
 # Linux
 
-提供 Linux x64 / ARM64 的 AppImage 和 Debian 包。安装包由对应架构的原生 GitHub Actions runner 构建，上传为该次 Checks 工作流的 Linux artifacts，不依赖在 macOS 上交叉复制原生依赖。
+提供 Linux x64 / ARM64 的 AppImage 和 Debian 包。安装包由对应架构的原生 GitHub Actions runner 构建，通过 GitHub Releases 发布，不依赖在 macOS 上交叉复制原生依赖。
 
 - AppImage：下载对应架构文件，添加执行权限后运行。
 - Debian / Ubuntu：安装对应架构的 .deb。
@@ -28,4 +28,4 @@ CI 在 Linux x64 / ARM64 上运行类型检查、完整测试、真实 Codex 与
 
 格式依据：[electron-builder Linux/AppImage](https://www.electron.build/v26/docs/appimage/)。凭据存储依据：[Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)。具体构建与原生启动是否通过，以对应提交的 Checks 结果为准；不等同于所有 Linux 发行版的人工桌面验收。
 
-2026-11-05：实现提交 `7b8d963` 的四平台 CI 全部通过；Linux x64 / ARM64 均通过上述原生桌面启动与加密凭据库验证，并生成 AppImage / Deb。下载见 [Checks 安装包](https://github.com/OrenZhang/model-bridge/actions/runs/42013693454)。
+2026-11-05：实现提交 `7b8d963` 的四平台 CI 全部通过；Linux x64 / ARM64 均通过上述原生桌面启动与加密凭据库验证，并生成 AppImage / Deb。历史构建见 [Checks 安装包](https://github.com/OrenZhang/model-bridge/actions/runs/42013693454)。

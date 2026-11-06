@@ -1,6 +1,7 @@
 import { modelModeOptions, modeLabels, type ReasoningMode } from '../shared/reasoning-modes.js';
 import { connectionState } from './connection-state.js';
-declare global { interface Window { modelBridge: { call: (operation: string, payload?: unknown) => Promise<any> } } }
+import type { UpdateState } from '../shared/updates.js';
+declare global { interface Window { modelBridge: { call: (operation: string, payload?: unknown) => Promise<any>; onUpdate: (listener: (state: UpdateState) => void) => () => void } } }
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 const escape = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const number = (n: number) => new Intl.NumberFormat('zh-CN', { notation: n >= 100000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(n);
@@ -18,6 +19,17 @@ let portableKeyId='';
 let portableClient = 'codex'; let portableAddress = ''; let portableRevision = 0;
 
 async function call(operation: string, payload?: unknown) { return window.modelBridge.call(operation, payload); }
+function updatePanel() {
+  const update: UpdateState | undefined = state?.update;
+  if (!update) return;
+  const busy = ['checking', 'downloading', 'installing'].includes(update.phase);
+  const labels: Record<UpdateState['phase'], string> = { idle: '检查 GitHub Releases 中的新版本', checking: '正在检查更新…', current: '当前已是最新版本', available: '有新版本可用', downloading: '正在下载安装包…', downloaded: '下载完成，已通过校验', installing: '正在启动安装…', error: '更新未完成', development: '源码运行模式，请使用安装包检查更新' };
+  const versionButton = $('#app-version');
+  versionButton.textContent = `v${update.currentVersion}${['available', 'downloaded'].includes(update.phase) ? ' · 有更新' : ''}`;
+  const canDownload = update.phase === 'available' || (update.phase === 'error' && update.retry === 'download');
+  const canInstall = update.phase === 'downloaded' || (update.phase === 'error' && update.retry === 'install');
+  $('#update-content').innerHTML = `<p class="update-version">当前版本 <code>${escape(update.currentVersion)}</code>${update.latestVersion ? ` <span>→</span> <code>${escape(update.latestVersion)}</code>` : ''}</p><p role="status">${labels[update.phase]}</p>${update.phase === 'downloading' ? `<progress class="update-progress" max="100" value="${Math.min(100, Math.max(0, update.percent ?? 0))}" aria-label="更新下载进度"></progress><p class="hint">${Math.round(update.percent ?? 0)}%${update.total ? ` · ${(Number(update.transferred ?? 0) / 1048576).toFixed(1)} / ${(update.total / 1048576).toFixed(1)} MB` : ''}</p>` : ''}${update.message ? `<p class="${update.phase === 'error' ? 'notice' : 'hint'}">${escape(update.message)}</p>` : ''}${update.notes ? `<details class="update-notes"><summary>更新说明</summary><pre>${escape(update.notes)}</pre></details>` : ''}<p class="hint">${update.installMode === 'installer' ? '下载完成后打开 DMG，退出应用并拖入“应用程序”替换。账号与配置保存在独立数据目录。' : '安装时退出并重启应用，进行中的模型请求完成后再安装。账号与配置保留。'}</p><div class="dialog-actions"><button class="plain" data-action="update-releases">查看 Releases</button><button class="secondary" data-action="update-check" ${busy || update.phase === 'development' ? 'disabled' : ''}>${update.phase === 'error' && update.retry === 'check' ? '重新检查' : '检查更新'}</button>${canDownload ? '<button class="primary" data-action="update-download">下载更新</button>' : ''}${canInstall ? `<button class="primary" data-action="update-install">${update.installMode === 'installer' ? '打开安装包' : '安装并重启'}</button>` : ''}</div>`;
+}
 function toast(message: string, error = false) { const element = $('#toast'); element.textContent = message.replace(/^Error invoking remote method '[^']+': Error: /, ''); element.classList.toggle('error', error); element.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => element.hidden = true, error ? 9000 : 4500); }
 async function action(operation: string, payload?: unknown, message?: string) { try { const result = await call(operation, payload); if (message) toast(message); await refresh(); return result; } catch (e: any) { toast(e.message ?? String(e), true); throw e; } }
 const activeModels = () => state.config.connections.filter((c: any) => c.enabled).flatMap((connection: any) => connection.models.filter((m: any) => m.enabled).map((model: any) => ({ connection, model })));
@@ -115,6 +127,7 @@ async function updatePortableConfig(preferLan = false) {
   } catch (error: any) { if (revision === portableRevision) $('#portable-preview').textContent = error.message; }
 }
 function render() {
+  updatePanel();
   $('#page-title').textContent = titles[page]!;
   $('#service-status').innerHTML = '<i></i> 本地网关运行中';
   let html = '';
@@ -256,6 +269,9 @@ document.addEventListener('click', event => {
   void (async () => {
     target.setAttribute('disabled', '');
     try {
+      if (operation === 'open-updates') { updatePanel(); $<HTMLDialogElement>('#update-dialog').showModal(); }
+      if (operation === 'update-releases') await call('update.releases');
+      if (['update-check', 'update-download', 'update-install'].includes(operation ?? '')) { state.update = await call(operation!.replace('update-', 'update.')); updatePanel(); }
       if (operation === 'add-connection') openConnection(undefined, target.dataset.provider);
       if (operation === 'edit') openConnection(id);
       if (operation === 'pool-details') showPool(id!);
@@ -356,6 +372,7 @@ document.addEventListener('change', event => {
 });
 const navIcons: Record<string, string> = {overview:'<path d="M2 10h16M10 2v16"/><circle cx="10" cy="10" r="8"/>',"connections": "<path d=\"M7 3v4m6-4v4M5 7h10v3a5 5 0 0 1-5 5v3M3 7h14\"/>", "models": "<path d=\"m10 2 8 5-8 5-8-5 8-5Zm-8 9 8 5 8-5M2 15l8 5 8-5\"/>", "clients": "<rect x=\"2\" y=\"3\" width=\"16\" height=\"14\" rx=\"2\"/><path d=\"m5 7 3 3-3 3m6 0h4\"/>", "usage": "<path d=\"M3 17V9m7 8V3m7 14v-6\"/>"};
 document.querySelectorAll<HTMLButtonElement>('nav [data-page]').forEach(button => { button.querySelector('span')!.innerHTML = `<svg viewBox="0 0 20 22" aria-hidden="true">${navIcons[button.dataset.page!] ?? ''}</svg>`; });
+window.modelBridge.onUpdate(update => { if (state) { state.update = update; updatePanel(); } });
 void refresh(); setInterval(() => { if (!clientBusy && !connectionSaving && !document.querySelector('select:focus') && !window.getSelection()?.toString()) void refresh(); }, 4000);
 export {};
 

@@ -1,6 +1,6 @@
 {
   "name": "model-bridge",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": true,
   "description": "One local model gateway for Codex, Claude Code and other agents.",
   "type": "module",
@@ -23,7 +23,9 @@
   "dependencies": {
     "@napi-rs/keyring": "^2.1.2",
     "@openai/codex": "0.144.1",
+    "electron-updater": "^6.8.11",
     "fflate": "^0.8.2",
+    "semver": "^7.8.6",
     "smol-toml": "^1.4.2",
     "undici": "8.12.3",
     "yaml": "^2.8.1",
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.0",
+    "@types/semver": "^7.8.0",
     "electron": "45.2.2",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.2",
@@ -95,7 +98,15 @@
     },
     "deb": {
       "maintainer": "OrenZhang"
-    }
+    },
+    "artifactName": "Model-Bridge-${version}-${os}-${arch}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "OrenZhang",
+      "repo": "model-bridge",
+      "releaseType": "prerelease"
+    },
+    "generateUpdatesFilesForAllChannels": true
   },
   "homepage": "https://github.com/OrenZhang/model-bridge",
   "author": {
