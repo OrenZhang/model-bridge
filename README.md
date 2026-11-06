@@ -111,6 +111,7 @@ npm run package
 | [使用与兼容性](docs/guide.md) | 登录、分发、代理、配置与完整限制 |
 | [发布与更新](docs/updates.md) | 更新行为、安装方式、Release 流程 |
 | [更新验证](docs/validation-updates.md) | 发布产物、真实下载与校验结果 |
+| [macOS 一键更新验证](docs/validation-mac-update.md) | 真实升级、配置保留与失败回退 |
 | [订阅认证](docs/provider-auth.md) | Kimi / MiniMax 授权与套餐边界 |
 | [连接与服务控制](docs/connection-controls.md) | 推理模式、独立 Key、CoSail 设备标识 |
 | [验证记录](docs/validation.md) | 真实服务、Codex 与模拟测试的范围 |
