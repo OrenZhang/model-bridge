@@ -20,11 +20,13 @@ export function parseNodes(source: string): Record<string, any>[] {
     names.add(value.name); return structuredClone(value);
   });
 }
-export function isolatedConfig(nodes: Record<string, any>[], selected: string, proxyPort: number, controlPort: number, password: string, controlSecret: string) {
+export function isolatedConfig(nodes: Record<string, any>[], selected: string, proxyPort: number, controlPort: number, password: string, controlSecret: string, automatic = false) {
   if (!nodes.some(node => node.name === selected)) throw new Error('所选节点已不存在，请重新选择。');
   // Build a fresh configuration. Subscription rules, listeners, DNS and TUN never enter the runtime.
-  return stringify({ 'mixed-port': proxyPort, 'allow-lan': false, 'bind-address': '127.0.0.1', authentication: [`mb:${password}`], mode: 'rule', 'log-level': 'silent', ipv6: false,
+  return stringify({ 'mixed-port': proxyPort, 'allow-lan': false, 'bind-address': '127.0.0.1', authentication: automatic ? nodes.map((_, i) => `mb-${i}:${password}`) : [`mb:${password}`], mode: 'rule', 'log-level': 'silent', ipv6: false,
     'external-controller': `127.0.0.1:${controlPort}`, secret: controlSecret,
     tun: { enable: false }, dns: { enable: false }, 'find-process-mode': 'off', 'geo-auto-update': false,
-    profile: { 'store-selected': false, 'store-fake-ip': false }, proxies: nodes, rules: [`MATCH,${selected}`] });
+    profile: { 'store-selected': false, 'store-fake-ip': false }, proxies: nodes,
+    // Separate authenticated tunnels keep in-flight streams on their original node.
+    rules: automatic ? [...nodes.map((node, i) => `IN-USER,mb-${i},${node.name}`), 'MATCH,REJECT'] : [`MATCH,${selected}`] });
 }

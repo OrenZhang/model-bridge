@@ -1,0 +1,11 @@
+{
+  "version": "v1.19.32",
+  "artifacts": {
+    "darwin-arm64": {"file":"mihomo-darwin-arm64-v1.19.32.gz","sha256":"3312a6780652c622890fd4357c6a853bbf865464fd047ac7b7f52dab8de18652"},
+    "darwin-x64": {"file":"mihomo-darwin-amd64-compatible-v1.19.32.gz","sha256":"18b382df77bded2ad0fb3db27db5636cb15b20729d5ba995a357eeb9b46bf507"},
+    "win32-x64": {"file":"mihomo-windows-amd64-compatible-v1.19.32.zip","sha256":"974a4d7ad69aed27aa2e8f91d61113573c14dadb14562c63e58effabf59816f0"},
+    "win32-arm64": {"file":"mihomo-windows-arm64-v1.19.32.zip","sha256":"7a4f6e58af9a120920935f2150cf642d945085fdb3e753314505b334234e1d1e"},
+    "linux-x64": {"file":"mihomo-linux-amd64-compatible-v1.19.32.gz","sha256":"ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20"},
+    "linux-arm64": {"file":"mihomo-linux-arm64-v1.19.32.gz","sha256":"9dd862e28b46ff7d775f169cceebc28deccaa0a9e804237d421cd2571e0caba0"}
+  }
+}

@@ -1,5 +1,5 @@
 import { managedModels, models } from '../core/catalog.js';
-import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage, net } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage, net, powerSaveBlocker } from 'electron';
 import electronUpdater from 'electron-updater';
 import { DesktopUpdates, RELEASES_URL } from './updates.js';
 import { macApplication, macUpdateAttempt, macUpdateRollbackNotice, prepareMacUpdate } from './mac-updater.js';
@@ -22,6 +22,7 @@ let updates: DesktopUpdates | undefined;
 let updateTimer: ReturnType<typeof setInterval> | undefined;
 let updateAttempt: Awaited<ReturnType<typeof macUpdateAttempt>>;
 let desktopReady = false;
+let awakeBlocker: number | undefined;
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', (_event, args) => {
@@ -35,9 +36,13 @@ else {
     }).catch(() => {});
   });
   app.on('activate', () => window?.show());
+  app.on('will-quit', () => { if (awakeBlocker !== undefined) { powerSaveBlocker.stop(awakeBlocker); awakeBlocker = undefined; } });
   app.on('before-quit', event => { if (quitting) return; event.preventDefault(); quitting = true; updates?.close(); clearInterval(updateTimer); void runtime?.close().finally(() => app.quit()); if (!runtime) app.quit(); });
   void app.whenReady().then(async () => {
   try {
+    // Keep the gateway reachable while the window is hidden in the tray.
+    // Display sleep remains allowed; the assertion ends with the application.
+    awakeBlocker = powerSaveBlocker.start('prevent-app-suspension');
     const applicationIcon = nativeImage.createFromPath(path.join(app.getAppPath(), 'assets', 'icon.png'));
     if (process.platform === 'darwin') app.dock?.setIcon(applicationIcon);
     const data = process.env.MODEL_BRIDGE_DATA_DIR ? path.resolve(process.env.MODEL_BRIDGE_DATA_DIR) : app.getPath('userData');
@@ -122,6 +127,8 @@ else {
           case 'network.save': return active.managed.save(payload);
           case 'network.refresh': return active.managed.refresh(z.string().parse(payload.id));
           case 'network.select': return active.managed.select(z.string().parse(payload.id), z.string().parse(payload.node));
+          case 'network.auto': return active.managed.automatic(z.string().parse(payload.id));
+          case 'network.check': return active.managed.check(z.string().parse(payload.id));
           case 'network.remove': return active.managed.remove(z.string().parse(payload.id));
           case 'network.install': return active.managed.core.ensure();
           case 'network.install-offline': {

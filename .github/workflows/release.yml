@@ -53,6 +53,13 @@ jobs:
       - run: npm run check
       - run: npm test -- --maxWorkers=2
       - run: npm run build
+      - name: Bundle verified official Mihomo core
+        run: node scripts/prepare-mihomo.mjs
+      - name: Verify AI node selection with real Mihomo
+        run: node scripts/validate-ai-proxy.mjs
+      - name: Verify macOS idle sleep prevention
+        if: runner.os == 'macOS'
+        run: npx electron scripts/validate-power-save.cjs
       - name: Verify Codex integration
         run: node scripts/validate-codex-providers.mjs --mock-pools
       - name: Build installers and update metadata

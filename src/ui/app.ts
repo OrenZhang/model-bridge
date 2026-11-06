@@ -54,9 +54,16 @@ function localAccountPanel() {
 function updateNetworks() {
   if (!$<HTMLDialogElement>('#network-dialog').open) return;
   const overview = state.managedNetworks ?? { core: {}, profiles: [] };
-  $('#network-core-status').innerHTML = `<div class="notice">mihomo ${escape(overview.core.version ?? '')} · ${overview.core.downloading ? '下载中…' : overview.core.installed ? '已安装，使用时自动启动' : '首次使用时下载官方内核'}<div class="row"><button class="plain" data-action="install-core" ${overview.core.installed || overview.core.downloading ? 'disabled' : ''}>下载内核</button><button class="plain" data-action="install-core-offline">离线导入内核</button></div></div>`;
-  $('#network-profiles').innerHTML = overview.profiles.map((profile: any) => `<div class="network-profile"><div class="row"><strong>${escape(profile.name)}</strong><span class="tag">${escape({ stopped: '按需启动', starting: '启动中', running: '运行中', error: '启动失败' }[profile.status as string] ?? profile.status)}</span></div><label>使用节点<select data-network-id="${escape(profile.id)}">${profile.nodes.map((node: string) => `<option value="${escape(node)}" ${node === profile.selected ? 'selected' : ''}>${escape(node)}</option>`).join('')}</select></label>${profile.error ? `<p class="hint">${escape(profile.error)}</p>` : ''}<div class="row">${profile.source === 'subscription' ? `<button class="plain" data-action="refresh-network" data-id="${escape(profile.id)}">更新订阅</button>` : '<span></span>'}<button class="plain danger" data-action="remove-network" data-id="${escape(profile.id)}">移除</button></div></div>`).join('');
-  $('#network-profiles').querySelectorAll<HTMLSelectElement>('select').forEach(select => { select.onchange = () => void action('network.select', { id: select.dataset.networkId, node: select.value }, '节点已切换').catch(() => {}); });
+  $('#network-core-status').innerHTML = `<div class="notice">mihomo ${escape(overview.core.version ?? '')} · ${overview.core.downloading ? '下载中…' : overview.core.installed ? '已安装，使用时自动启动' : overview.core.bundled ? '已附带官方内核，首次使用自动安装' : '首次使用时下载官方内核'}<div class="row"><button class="plain" data-action="install-core" ${overview.core.installed || overview.core.downloading ? 'disabled' : ''}>${overview.core.bundled ? '安装内置内核' : '下载内核'}</button><button class="plain" data-action="install-core-offline">离线导入内核</button></div>${overview.core.error ? `<p class="hint service-error">${escape(overview.core.error)}</p>` : ''}</div>`;
+  $('#network-profiles').innerHTML = overview.profiles.map((profile: any) => {
+    const automatic = profile.selectionMode !== 'manual';
+    const checks = profile.checks ?? [];
+    return `<div class="network-profile"><div class="row"><strong>${escape(profile.name)}</strong><span class="tag">${escape({ stopped: '按需启动', starting: '启动中', running: '运行中', error: '启动失败' }[profile.status as string] ?? profile.status)}</span></div>
+      <label>使用节点<select data-network-id="${escape(profile.id)}"><option value="auto" ${automatic ? 'selected' : ''}>自动 · AI 可用优选（最低延迟）</option>${profile.nodes.map((node: string) => `<option value="manual:${escape(node)}" ${!automatic && node === profile.selected ? 'selected' : ''}>${escape(node)}</option>`).join('')}</select></label>
+      ${automatic ? `<p class="hint">按连接检测 AI 接口，每 5 分钟复测。切换只影响后续请求。</p>${checks.length ? checks.map((check: any) => `<div class="network-check"><span class="status-dot ${check.selected ? 'success' : check.checking ? '' : 'error'}"></span><div><strong>${escape(check.target)}</strong><small>${check.checking ? '正在检测… · ' : ''}${check.selected ? `${escape(check.selected)} · ${number(check.latencyMs)} ms · ${check.available}/${check.total} 可用` : check.checking ? '首次检测可能需要一些时间' : '暂无通过检测的节点'}${check.checkedAt ? ` · ${escape(new Date(check.checkedAt).toLocaleTimeString())}` : ''}</small></div></div>`).join('') : '<p class="hint">首次使用连接时自动检测，也可点击立即检测。不验证账号额度或模型权限。</p>'}` : ''}
+      ${profile.error ? `<p class="hint">${escape(profile.error)}</p>` : ''}<div class="row"><div>${automatic ? `<button class="plain" data-action="check-network" data-id="${escape(profile.id)}" ${checks.some((c: any) => c.checking) ? 'disabled' : ''}>立即检测</button>` : ''}${profile.source === 'subscription' ? `<button class="plain" data-action="refresh-network" data-id="${escape(profile.id)}">更新订阅</button>` : ''}</div><button class="plain danger" data-action="remove-network" data-id="${escape(profile.id)}">移除</button></div></div>`;
+  }).join('');
+  $('#network-profiles').querySelectorAll<HTMLSelectElement>('select').forEach(select => { select.onchange = () => void action(select.value === 'auto' ? 'network.auto' : 'network.select', { id: select.dataset.networkId, node: select.value.slice(7) }, '节点模式已切换').catch(() => {}); });
 }
 function connections() {
   const entries = state.config.connections;
@@ -289,6 +296,7 @@ document.addEventListener('click', event => {
       if (operation === 'manage-networks') { $<HTMLDialogElement>('#network-dialog').showModal(); updateNetworks(); }
       if (operation === 'install-core') await action('network.install', {}, '内核已安装');
       if (operation === 'install-core-offline') await action('network.install-offline', {}, '离线安装操作已完成');
+      if (operation === 'check-network') await action('network.check', { id }, 'AI 节点检测完成');
       if (operation === 'refresh-network') await action('network.refresh', { id }, '订阅已更新');
       if (operation === 'remove-network' && confirm('移除此订阅？')) await action('network.remove', { id }, '订阅已移除');
       if (operation === 'read-network-config') { const contents = await call('network.read-config'); if (contents !== null) $<HTMLTextAreaElement>('textarea[name="config"]').value = contents; }
@@ -344,7 +352,7 @@ $<HTMLSelectElement>('select[name="source"]').onchange = event => { const subscr
 $<HTMLFormElement>('#network-form').onsubmit = event => {
   event.preventDefault(); const form = new FormData(event.target as HTMLFormElement); const field = (key: string) => String(form.get(key) ?? '').trim();
   const button = (event.target as HTMLFormElement).querySelector<HTMLButtonElement>('button[type="submit"]')!; button.disabled = true;
-  void action('network.save', { name: field('name'), source: field('source'), url: field('url'), config: field('config') }, '订阅已保存，请选择节点').then(id => {
+  void action('network.save', { name: field('name'), source: field('source'), url: field('url'), config: field('config') }, '订阅已保存，默认自动优选 AI 节点').then(id => {
     $<HTMLFormElement>('#network-form').reset(); $('#subscription-field').hidden = false; $('#network-config-fields').hidden = true;
     const select = $<HTMLSelectElement>('select[name="proxy"]'); select.innerHTML = proxyOptions(); select.value = `managed:${id}`;
   }).catch(() => {}).finally(() => button.disabled = false);

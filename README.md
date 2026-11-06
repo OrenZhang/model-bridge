@@ -12,15 +12,17 @@
 
 ## 下载安装
 
-当前为 **`0.1.0-alpha.3`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
+当前为 **`0.1.0-alpha.4`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
 
 | 系统 | 架构 | 安装包 |
 | --- | --- | --- |
-| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-mac-arm64.dmg) |
-| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-mac-x64.dmg) |
-| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-win-x64.exe) |
-| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-linux-amd64.deb) |
-| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-linux-arm64.deb) |
+| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.4/Model-Bridge-0.1.0-alpha.4-mac-arm64.dmg) |
+| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.4/Model-Bridge-0.1.0-alpha.4-mac-x64.dmg) |
+| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.4/Model-Bridge-0.1.0-alpha.4-win-x64.exe) |
+| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.4/Model-Bridge-0.1.0-alpha.4-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.4/Model-Bridge-0.1.0-alpha.4-linux-amd64.deb) |
+| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.4/Model-Bridge-0.1.0-alpha.4-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.4/Model-Bridge-0.1.0-alpha.4-linux-arm64.deb) |
+
+安装包已附带对应平台的官方 mihomo 内核，首次使用自动校验并安装，无需另行下载；保留下载和离线导入入口。
 
 macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未签名、公证；是否允许运行由系统安全设置决定。Linux 桌面需可用的系统凭据库，安装说明见 [Linux 文档](docs/linux.md)。
 
@@ -52,7 +54,7 @@ macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未�
 | 模型管理 | 自动发现、手动添加、同步目录；按模型控制是否对外提供，隐藏模型的直接调用也会被拒绝 |
 | 客户端切换 | Codex 桌面端 / CLI、Claude Code 在统一模型与原始认证之间切换；配置写入前备份 |
 | 局域网服务 | 本机或局域网监听、独立访问 Key、分 Key 用量、跨平台配置脚本 |
-| 连接代理 | 按连接使用系统网络、直连、HTTP / HTTPS / SOCKS5，或 Clash / Mihomo YAML 订阅；不修改系统代理 |
+| 连接代理 | 按连接使用系统网络、直连、HTTP / HTTPS / SOCKS5，或 Clash / Mihomo YAML 订阅；默认按 AI 接口可用性选择最低延迟节点，每 5 分钟复测，保留手动选择；不修改系统代理 |
 | 用量统计 | 请求数、成功率、输入 / 输出 / 缓存 Token、延迟与估算费用，支持筛选和 CSV；只保留最近 60 天，过期自动删除 |
 | 版本更新 | 从 GitHub Releases 检查版本，显示下载进度，校验安装包，一键安装并重启，macOS 启动失败时自动回退 |
 
@@ -80,7 +82,7 @@ macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未�
 
 调用元数据放在 `usage/`，按 UTC 日期每天一个 `.jsonl` 文件，只保留含当天的最近 60 个 UTC 日，不记录提示词或回复正文。桌面密钥通过系统凭据服务加密；本机 Codex 登录副本使用私有文件权限保存。详见 [存储说明](docs/guide.md#数据存储)。
 
-可通过 `MODEL_BRIDGE_DATA_DIR` 指定数据目录。关闭窗口后网关留在托盘，选择“退出”才会停止。
+可通过 `MODEL_BRIDGE_DATA_DIR` 指定数据目录。关闭窗口后网关留在托盘，选择“退出”才会停止。桌面应用运行期间阻止系统因空闲自动睡眠，屏幕可以正常熄灭；退出后释放。
 
 ## 开发
 
@@ -113,6 +115,7 @@ npm run package
 | [更新验证](docs/validation-updates.md) | 发布产物、真实下载与校验结果 |
 | [macOS 一键更新验证](docs/validation-mac-update.md) | 真实升级、配置保留与失败回退 |
 | [订阅认证](docs/provider-auth.md) | Kimi / MiniMax 授权与套餐边界 |
+| [AI 节点优选验证](docs/validation-ai-proxy.md) | 自动测速、故障切换、流式保护与内置内核 |
 | [连接与服务控制](docs/connection-controls.md) | 推理模式、独立 Key、CoSail 设备标识 |
 | [验证记录](docs/validation.md) | 真实服务、Codex 与模拟测试的范围 |
 | [局域网调用矩阵](docs/validation-lan-model-matrix.md) | 三协议、流式、多轮与工具调用结果 |

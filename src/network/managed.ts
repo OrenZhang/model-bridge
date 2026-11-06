@@ -9,16 +9,17 @@ import { Agent, fetch } from 'undici';
 import { z } from 'zod';
 import { stringify } from 'yaml';
 import { ConfigStore, atomicWrite, type SecretStore } from '../core/store.js';
-import { ConnectionSchema } from '../core/config.js';
+import { ConnectionSchema, type Connection } from '../core/config.js';
 import type { Network } from '../core/network.js';
 import { isolatedConfig, parseNodes } from './config.js';
 import { MihomoCore } from './core.js';
+import { AiNodeSelection, aiProbeTarget } from './ai-selection.js';
 
 async function freePort() {
   const server = createServer(); await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const port = (server.address() as { port: number }).port; await new Promise<void>(resolve => server.close(() => resolve())); return port;
 }
-type Running = { child: ChildProcess; url: string; directory: string; updatedAt: string; selected: string };
+type Running = { child: ChildProcess; url: string; directory: string; updatedAt: string; selected: string; selectionMode: 'auto' | 'manual'; selection?: AiNodeSelection };
 export class ManagedNetworks {
   readonly core: MihomoCore;
   private running = new Map<string, Running>();
@@ -31,7 +32,7 @@ export class ManagedNetworks {
     this.core = new MihomoCore(data, (url, max, official) => this.download(url, max, official));
   }
   overview() {
-    return { core: this.core.status(), profiles: this.store.get().networkProfiles.map(profile => ({ ...profile, status: this.starting.has(profile.id) ? 'starting' : this.running.has(profile.id) ? 'running' : this.errors.has(profile.id) ? 'error' : 'stopped', error: this.errors.get(profile.id) })) };
+    return { core: this.core.status(), profiles: this.store.get().networkProfiles.map(profile => ({ ...profile, checks: this.running.get(profile.id)?.selection?.snapshot() ?? [], status: this.starting.has(profile.id) ? 'starting' : this.running.has(profile.id) ? 'running' : this.errors.has(profile.id) ? 'error' : 'stopped', error: this.errors.get(profile.id) })) };
   }
   private async download(initial: string, max: number, official = false) {
     let url = new URL(initial);
@@ -66,7 +67,7 @@ export class ManagedNetworks {
       const secretRef = `network:${id}`;
       await this.secrets.set(secretRef, JSON.stringify({ config: stringify({ proxies: nodes }), ...(input.source === 'subscription' ? { url } : {}) }));
       await this.stop(id);
-      const profile = { id, name: input.name, source: input.source, nodes: nodes.map(node => node.name as string), selected: nodes.some(n => n.name === old?.selected) ? old!.selected : nodes[0]!.name as string, secretRef, updatedAt: new Date().toISOString() };
+      const profile = { id, name: input.name, source: input.source, nodes: nodes.map(node => node.name as string), selected: nodes.some(n => n.name === old?.selected) ? old!.selected : nodes[0]!.name as string, selectionMode: old?.selectionMode ?? 'auto' as const, secretRef, updatedAt: new Date().toISOString() };
       await this.store.update(current => { current.networkProfiles = [...current.networkProfiles.filter(p => p.id !== id), profile]; });
       this.errors.delete(id); return id;
     } finally { this.changing.delete(id); }
@@ -76,18 +77,38 @@ export class ManagedNetworks {
     if (!this.canChange() || this.changing.has(id) || this.starting.has(id)) throw new Error('请在当前请求完成后切换节点。');
     const profile = this.store.get().networkProfiles.find(p => p.id === id); if (!profile?.nodes.includes(node)) throw new Error('节点不存在。');
     this.changing.add(id);
-    try { await this.stop(id); await this.store.update(current => { current.networkProfiles.find(p => p.id === id)!.selected = node; }); this.errors.delete(id); }
+    try { await this.stop(id); await this.store.update(current => { const p = current.networkProfiles.find(p => p.id === id)!; p.selected = node; p.selectionMode = 'manual'; }); this.errors.delete(id); }
     finally { this.changing.delete(id); }
+  }
+  async automatic(id: string) {
+    if (!this.canChange() || this.changing.has(id) || this.starting.has(id)) throw new Error('请在当前请求完成后切换节点模式。');
+    if (!this.store.get().networkProfiles.some(p => p.id === id)) throw new Error('订阅不存在。');
+    this.changing.add(id);
+    try { await this.stop(id); await this.store.update(current => { current.networkProfiles.find(p => p.id === id)!.selectionMode = 'auto'; }); this.errors.delete(id); }
+    finally { this.changing.delete(id); }
+  }
+  async check(id: string) {
+    const config = this.store.get();
+    const connections = config.connections.filter(c => { const choice = c.proxy.mode === 'inherit' ? config.defaultProxy : c.proxy; return c.enabled && choice.mode === 'managed' && choice.profileId === id; });
+    if (!connections.length) throw new Error('请先把此订阅绑定到一个 AI 连接，再检测。');
+    await Promise.allSettled(connections.map(c => this.proxyUrl(id, c)));
+    await this.running.get(id)?.selection?.checkAll();
   }
   async remove(id: string) {
     const config = this.store.get();
     if ([config.defaultProxy, ...config.connections.map(c => c.proxy)].some(p => p.mode === 'managed' && p.profileId === id)) throw new Error('请先从使用此订阅的模型连接中解除绑定。');
     await this.stop(id); await this.store.update(current => { current.networkProfiles = current.networkProfiles.filter(p => p.id !== id); });
   }
-  async proxyUrl(id: string): Promise<string> {
+  async proxyUrl(id: string, connection?: Connection): Promise<string> {
+    await this.ensureRunning(id);
+    const running = this.running.get(id)!;
+    return running.selection && connection ? running.selection.choose(aiProbeTarget(connection)) : running.url;
+  }
+  failed(id: string, connection: Connection, proxy: string) { this.running.get(id)?.selection?.failed(aiProbeTarget(connection), proxy); }
+  private async ensureRunning(id: string): Promise<string> {
     if (this.closed || this.changing.has(id)) throw new Error('内置网络正在停止或更新。');
     const profile = this.store.get().networkProfiles.find(p => p.id === id); if (!profile) throw new Error('内置网络配置不存在。');
-    const running = this.running.get(id); if (running && running.updatedAt === profile.updatedAt && running.selected === profile.selected) return running.url;
+    const running = this.running.get(id); if (running && running.updatedAt === profile.updatedAt && running.selected === profile.selected && running.selectionMode === profile.selectionMode) return running.url;
     if (this.starting.has(id)) return this.starting.get(id)!;
     const task = this.start(id).catch(error => { this.errors.set(id, error instanceof Error ? error.message : '内置网络启动失败。'); throw error; }).finally(() => this.starting.delete(id));
     this.starting.set(id, task); return task;
@@ -101,21 +122,22 @@ export class ManagedNetworks {
     const password = randomBytes(24).toString('hex'), controlSecret = randomBytes(24).toString('hex');
     const root = path.join(this.data, 'network-runtime'); await mkdir(root, { recursive: true, mode: 0o700 });
     const directory = await mkdtemp(path.join(root, 'run-')); const config = path.join(directory, 'config.yaml');
-    await atomicWrite(config, isolatedConfig(nodes, profile.selected, port, control, password, controlSecret));
+    await atomicWrite(config, isolatedConfig(nodes, profile.selected, port, control, password, controlSecret, profile.selectionMode === 'auto'));
     const env: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: '1' };
     for (const key of ['PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LOCALAPPDATA']) if (process.env[key]) env[key] = process.env[key];
     const runner = fileURLToPath(new URL('./runner.js', import.meta.url)).replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
     const child = fork(runner, [binary, directory, config], { env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true });
-    const running: Running = { child, url: `http://mb:${password}@127.0.0.1:${port}`, directory, updatedAt: profile.updatedAt, selected: profile.selected };
+    const nodeUrl = (i: number) => `http://mb-${i}:${password}@127.0.0.1:${port}`;
+    const running: Running = { child, url: profile.selectionMode === 'auto' ? nodeUrl(0) : `http://mb:${password}@127.0.0.1:${port}`, directory, updatedAt: profile.updatedAt, selected: profile.selected, selectionMode: profile.selectionMode };
     let exited = false; child.once('error', () => { exited = true; });
-    child.once('exit', () => { exited = true; if (this.running.get(id) === running) { this.running.delete(id); this.errors.set(id, '内置网络进程已停止，请重试。'); } });
+    child.once('exit', () => { exited = true; void running.selection?.close(); if (this.running.get(id) === running) { this.running.delete(id); this.errors.set(id, '内置网络进程已停止，请重试。'); } });
     try {
       for (let attempt = 0; attempt < 60; attempt++) {
         if (exited || this.closed) throw new Error('内置网络启动失败，请检查订阅节点配置。');
         try {
           const response = await fetch(`http://127.0.0.1:${control}/version`, { headers: { authorization: `Bearer ${controlSecret}` }, dispatcher: this.direct, signal: AbortSignal.timeout(500) });
           await response.body?.cancel();
-          if (response.ok) { this.running.set(id, running); this.errors.delete(id); return running.url; }
+          if (response.ok) { if (profile.selectionMode === 'auto') running.selection = new AiNodeSelection(nodes.map(n => n.name), nodeUrl); this.running.set(id, running); this.errors.delete(id); return running.url; }
         } catch { /* The child may still be opening its listeners. */ }
         await delay(200);
       }
@@ -124,6 +146,7 @@ export class ManagedNetworks {
   }
   private async stop(id: string) {
     const active = this.running.get(id); if (!active) return; this.running.delete(id);
+    await active.selection?.close();
     if (active.child.exitCode === null) await new Promise<void>(resolve => { const timer = setTimeout(() => { active.child.kill('SIGKILL'); resolve(); }, 3000); active.child.once('exit', () => { clearTimeout(timer); resolve(); }); active.child.kill(); });
     await rm(active.directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }

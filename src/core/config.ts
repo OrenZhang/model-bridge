@@ -64,7 +64,7 @@ export const ConfigSchema = z.object({
     credentialRef: z.string().optional(),
   })).default([]),
   connections: z.array(ConnectionSchema).default([]),
-  networkProfiles: z.array(z.object({ id: identifier, name: z.string().min(1).max(100), source: z.enum(['subscription', 'config']), nodes: z.array(z.string()).min(1), selected: z.string(), secretRef: z.string(), updatedAt: z.string() })).default([]),
+  networkProfiles: z.array(z.object({ id: identifier, name: z.string().min(1).max(100), source: z.enum(['subscription', 'config']), nodes: z.array(z.string()).min(1), selected: z.string(), selectionMode: z.enum(['auto', 'manual']).default('auto'), secretRef: z.string(), updatedAt: z.string() })).default([]),
   clients: z.array(z.object({ id: identifier, name: z.string().min(1), enabled:z.boolean().default(true), tokenHash: z.string().regex(/^[a-f0-9]{64}$/) })).default([]),
 }).superRefine((config, ctx) => {
   for (const [name, entries] of Object.entries({ connections: config.connections, proxies: config.proxies, networkProfiles: config.networkProfiles, clients: config.clients }))

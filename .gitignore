@@ -11,3 +11,5 @@ work/
 .model-bridge/
 auth.json
 *.credentials.json
+assets/mihomo/*.gz
+assets/mihomo/*.zip

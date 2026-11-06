@@ -48,7 +48,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   let usageWriteFailed = false;
   await usage.prune().catch(() => { usageWriteFailed = true; });
   let managed: ManagedNetworks;
-  const network = new Network(() => store.get(), secrets, systemProxy, id => managed.proxyUrl(id));
+  const network = new Network(() => store.get(), secrets, systemProxy, (id, connection) => managed.proxyUrl(id, connection), (id, connection, proxy) => managed.failed(id, connection, proxy));
   const clients = new ClientConfiguration(home, directory, process.env.CODEX_HOME ? path.resolve(process.env.CODEX_HOME) : undefined);
   const localAccounts = new LocalCodexAccounts(home, process.env.CODEX_HOME, directory, () => store.get(), secrets);
   const logins = new Map<string, { signature: string; login: DeviceLogin }>();

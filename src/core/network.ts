@@ -4,17 +4,18 @@ import { BridgeError } from './config.js';
 import type { SecretStore } from './store.js';
 
 export type SystemProxyResolver = (url: string) => Promise<string | undefined>;
-export type ManagedProxyResolver = (profileId: string) => Promise<string>;
+export type ManagedProxyResolver = (profileId: string, connection: Connection) => Promise<string>;
+type ManagedFailure = (profileId: string, connection: Connection, proxy: string) => void;
 export class Network {
   private agents = new Map<string, Dispatcher>();
-  constructor(private config: () => Config, private secrets: SecretStore, private systemProxy?: SystemProxyResolver, private managedProxy?: ManagedProxyResolver) {}
+  constructor(private config: () => Config, private secrets: SecretStore, private systemProxy?: SystemProxyResolver, private managedProxy?: ManagedProxyResolver, private managedFailure?: ManagedFailure) {}
   async proxyUrl(connection: Connection, destination: string, forSubprocess = false): Promise<string | undefined> {
     const config = this.config();
     const choice = connection.proxy.mode === 'inherit' ? config.defaultProxy : connection.proxy;
     if (choice.mode === 'direct') return undefined;
     if (choice.mode === 'managed') {
       if (!this.managedProxy) throw new BridgeError(503, 'subscription_unavailable', '内置订阅网络当前不可用。');
-      return this.managedProxy(choice.profileId);
+      return this.managedProxy(choice.profileId, connection);
     }
     if (choice.mode === 'system') {
       if (this.systemProxy) return this.systemProxy(destination);
@@ -38,6 +39,9 @@ export class Network {
     const choice = connection.proxy.mode === 'inherit' ? config.defaultProxy : connection.proxy;
     const url = await this.proxyUrl(connection, destination);
     const key = url ?? (choice.mode === 'system' && !this.systemProxy ? 'environment' : 'direct');
+    return this.agent(key);
+  }
+  private agent(key: string) {
     let agent = this.agents.get(key);
     if (!agent) {
       agent = key === 'direct' ? new Agent() : key === 'environment' ? new EnvHttpProxyAgent() : new ProxyAgent(key);
@@ -46,11 +50,20 @@ export class Network {
     return agent;
   }
   async request(connection: Connection, url: string, init: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal } = {}) {
+    const config = this.config();
+    const choice = connection.proxy.mode === 'inherit' ? config.defaultProxy : connection.proxy;
+    let proxy: string | undefined;
+    const failed = () => { if (proxy && choice.mode === 'managed') this.managedFailure?.(choice.profileId, connection, proxy); };
     try {
-      return await fetch(url, { ...init, redirect: 'error', dispatcher: await this.dispatcher(connection, url) });
+      proxy = await this.proxyUrl(connection, url);
+      const dispatcher = this.agent(proxy ?? (choice.mode === 'system' && !this.systemProxy ? 'environment' : 'direct'));
+      const response = await fetch(url, { ...init, redirect: 'error', dispatcher });
+      if ([502, 503, 504].includes(response.status)) failed();
+      return response;
     } catch (error) {
       if (init.signal?.aborted) throw init.signal.reason;
       if (error instanceof BridgeError) throw error;
+      failed();
       throw new BridgeError(502, 'upstream_connection_failed', 'Could not reach the upstream service through the configured network connection.');
     }
   }
