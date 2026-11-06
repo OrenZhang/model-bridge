@@ -7,11 +7,13 @@ export function models(config: Config) {
 }
 export function managedModels(config: Config) {
   const all = structuredClone(config);
+  all.hiddenModels = [];
   for (const connection of all.connections) { connection.enabled = true; for (const model of connection.models) model.enabled = true; }
   return publicModelRoutes(all).map(entry => {
     // Include duplicate account imports too: hiding a model must hide every route.
     const members = config.connections.flatMap(connection => connection.models.filter(model => model.upstreamId === entry.id).map(model => ({connection, model})));
-    return { ...entry, members, enabled: members.every(m => m.model.enabled), mixed: members.some(m => m.model.enabled) && members.some(m => !m.model.enabled), exposedAccounts: members.filter(m => m.connection.enabled && m.model.enabled).length };
+    const hidden = config.hiddenModels.includes(entry.id);
+    return { ...entry, members, enabled: !hidden && members.every(m => m.model.enabled), mixed: !hidden && members.some(m => m.model.enabled) && members.some(m => !m.model.enabled), exposedAccounts: hidden ? 0 : members.filter(m => m.connection.enabled && m.model.enabled).length };
   });
 }
 export function openaiCatalog(config: Config) {

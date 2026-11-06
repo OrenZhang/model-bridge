@@ -70,6 +70,29 @@ it('preserves a saved DeepSeek key when editing a path on the same origin, and n
 it('rejects saving API authentication without a key instead of silently discovering anonymously',async()=>{
   const f=await credentialFixture();await expect(f.runtime.saveConnection(f.raw,' ')).rejects.toThrow('请填写 API Key');expect(f.requests()).toBe(0);
 });
+it('persists multiple upstream protocols before models exist and keeps them through discovery and reload',async()=>{
+ const f=await credentialFixture();
+ const saved=await f.runtime.saveConnection({...f.raw,upstreamProtocols:['responses','messages']},'fixture-deepseek-key');
+ expect(saved.models).toEqual([]);
+ const reloaded=await new ConfigStore(f.runtime.store.directory).load();expect(reloaded.get().connections[0]!.upstreamProtocols).toEqual(['responses','messages']);
+ expect((await f.runtime.discover(saved.id))[0]!.protocols).toEqual(['responses','messages']);
+ const current=f.runtime.store.get().connections[0]!;
+ await f.runtime.saveConnection({...current,upstreamProtocols:undefined});
+ expect((await f.runtime.discover(saved.id))[0]!.protocols).toEqual(['chat']);
+ expect(f.runtime.store.get().connections[0]!.upstreamProtocols).toBeUndefined();
+});
+it('does not let an older discovery overwrite a protocol setting saved while it was in flight',async()=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'mb-protocol-race-'));cleanup.push(()=>rm(dir,{recursive:true,force:true}));
+ let unblock!:()=>void;let entered!:()=>void;const gate=new Promise<void>(r=>{unblock=r});const started=new Promise<void>(r=>{entered=r});
+ const server=createServer(async(_req,res)=>{entered();await gate;res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'model'}]}));});
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));cleanup.push(()=>new Promise<void>(r=>{server.closeAllConnections();server.close(()=>r())}));
+ await atomicWrite(path.join(dir,'config.json'),JSON.stringify({port:0,defaultProxy:{mode:'direct'}}));
+ const runtime=await createRuntime(dir,{get:async()=>undefined},dir);cleanup.push(()=>runtime.close());cleanup.push(async()=>unblock());
+ const saved=await runtime.saveConnection({id:'race',name:'race',provider:'custom',auth:'none',baseUrl:`http://127.0.0.1:${(server.address() as any).port}/v1`,upstreamProtocols:['responses'],models:[{id:'model',name:'model',upstreamId:'model',protocols:['responses']}]});
+ const pending=runtime.discover(saved.id);const rejected=expect(pending).rejects.toThrow('连接已更改');await started;
+ await runtime.saveConnection({...saved,upstreamProtocols:undefined});unblock();await rejected;
+ expect(runtime.store.get().connections[0]!.models[0]!.protocols).toEqual(['chat']);
+});
 it('distinguishes official authentication rejection from a missing stored key without suggesting model IDs',async()=>{
   const f=await credentialFixture();const saved=await f.runtime.saveConnection(f.raw,'fixture-deepseek-key');f.reject();
   await expect(f.runtime.discover(saved.id)).rejects.toThrow('DeepSeek拒绝了此连接的 API Key（HTTP 401）');

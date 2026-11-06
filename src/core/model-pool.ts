@@ -4,7 +4,7 @@ export type ModelRoute = { connection: Connection; model: Model };
 export const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 export function routeFingerprint(route: ModelRoute) {
   const { connection: c, model: m } = route;
-  return digest(JSON.stringify([c.id, c.provider, c.auth, c.accountId, c.accountEmail, c.secretRef, c.credentialVersion, c.baseUrl, m.upstreamId, m.protocols]));
+  return digest(JSON.stringify([c.id, c.provider, c.auth, c.accountId, c.accountEmail, c.secretRef, c.credentialVersion, c.baseUrl, m.upstreamId, m.protocols, ...(c.upstreamProtocols ? [c.upstreamProtocols] : [])]));
 }
 export function modelGroupId(connection: Connection, model: Model) {
   const key = JSON.stringify([connection.provider, connection.auth, connection.baseUrl.replace(/\/+$/, ''), model.upstreamId, [...model.protocols].sort(), model.tools, model.images, model.contextWindow, [...model.reasoning].sort(), ...(model.thinking ? [model.thinking] : [])]);
@@ -12,7 +12,7 @@ export function modelGroupId(connection: Connection, model: Model) {
 }
 export function modelGroups(config: Config) {
   const groups = new Map<string, ModelRoute[]>();
-  for (const connection of config.connections.filter(c => c.enabled)) for (const model of connection.models.filter(m => m.enabled)) {
+  for (const connection of config.connections.filter(c => c.enabled)) for (const model of connection.models.filter(m => m.enabled && !config.hiddenModels.includes(m.upstreamId))) {
     const id = modelGroupId(connection, model);
     const group = groups.get(id) ?? [];
     if (!group.some(r => (r.connection.accountId && r.connection.accountEmail ? JSON.stringify([r.connection.accountId, r.connection.accountEmail ?? '']) : r.connection.id) === (connection.accountId && connection.accountEmail ? JSON.stringify([connection.accountId, connection.accountEmail ?? '']) : connection.id))) group.push({ connection, model });
@@ -21,6 +21,7 @@ export function modelGroups(config: Config) {
   return groups;
 }
 export function poolCandidates(config: Config, id: string) {
+  if (config.hiddenModels.includes(id)) return undefined;
   return modelGroups(config).get(id) ?? publicModelRoutes(config).find(route => route.id === id)?.members;
 }
 export function catalogRoutes(config: Config) {

@@ -14,7 +14,15 @@ export class ConfigStore {
   private writes: Promise<void> = Promise.resolve();
   constructor(readonly directory: string) {}
   async load() {
-    try { this.current = ConfigSchema.parse(JSON.parse(await readFile(path.join(this.directory, 'config.json'), 'utf8'))); }
+    try {
+      const raw = JSON.parse(await readFile(path.join(this.directory, 'config.json'), 'utf8'));
+      this.current = ConfigSchema.parse(raw);
+      if (!Object.hasOwn(raw, 'hiddenModels')) {
+        const disabled = new Map<string, boolean>();
+        for (const connection of this.current.connections) for (const model of connection.models) disabled.set(model.upstreamId, (disabled.get(model.upstreamId) ?? true) && !model.enabled);
+        this.current.hiddenModels = [...disabled].filter(([,hidden])=>hidden).map(([id])=>id);
+      }
+    }
     catch (error: any) { if (error.code !== 'ENOENT') throw new Error('Invalid Model Bridge configuration. Restore a valid config.json.'); }
     return this;
   }

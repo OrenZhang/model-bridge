@@ -138,6 +138,9 @@ input::placeholder,textarea::placeholder{color:#9299a1}
 .notice{border:1px solid #e6ded1;background:#faf8f3;border-radius:6px;padding:12px 14px;color:#7d6d50;font-size:12px;line-height:1.7;margin:14px 0}
 .notice .row{margin-top:8px}
 .wide-dialog{width:700px}
+#upstream-protocols fieldset{border:0;padding:0;margin:12px 0}
+#upstream-protocols legend{font-size:11px;color:var(--muted);margin-bottom:8px}
+#upstream-protocols .toggle{margin:7px 0}
 .portable-dialog{width:610px}
 .portable-network{display:flex;align-items:center;gap:15px}
 .portable-network select{flex:1;min-width:0;margin:0}

@@ -41,6 +41,7 @@ export const ConnectionSchema = z.object({
   credentialVersion: z.string().optional(),
   secretRef: z.string().min(1).optional(),
   reasoningModes: z.record(z.string(),z.enum(modeValues)).default({}),
+  upstreamProtocols: z.array(ProtocolSchema).min(1).refine(items => new Set(items).size === items.length).optional(),
   proxy: ProxyChoiceSchema.default({ mode: 'inherit' }),
   enabled: z.boolean().default(true), models: z.array(ModelSchema).default([]),
 }).superRefine((connection, ctx) => {
@@ -64,6 +65,7 @@ export const ConfigSchema = z.object({
     credentialRef: z.string().optional(),
   })).default([]),
   connections: z.array(ConnectionSchema).default([]),
+  hiddenModels: z.array(z.string().min(1).max(200)).default([]),
   networkProfiles: z.array(z.object({ id: identifier, name: z.string().min(1).max(100), source: z.enum(['subscription', 'config']), nodes: z.array(z.string()).min(1), selected: z.string(), selectionMode: z.enum(['auto', 'manual']).default('auto'), secretRef: z.string(), updatedAt: z.string() })).default([]),
   clients: z.array(z.object({ id: identifier, name: z.string().min(1), enabled:z.boolean().default(true), tokenHash: z.string().regex(/^[a-f0-9]{64}$/) })).default([]),
 }).superRefine((config, ctx) => {
@@ -79,11 +81,12 @@ export type Config = z.infer<typeof ConfigSchema>;
 export const emptyConfig = (): Config => ConfigSchema.parse({});
 export const routeId = (connection: Connection, model: Model) => `${connection.id}/${model.id}`;
 export function resolveRoute(config: Config, id: string) {
+  if (config.hiddenModels.includes(id)) throw new BridgeError(404, 'model_not_found', 'Model is unavailable. Refresh the model list and select an enabled model.');
   const pooled = poolCandidates(config, id);
   if (pooled?.length) return structuredClone(pooled[0]!);
   for (const connection of config.connections) {
     if (!connection.enabled) continue;
-    const model = connection.models.find(m => m.enabled && routeId(connection, m) === id);
+    const model = connection.models.find(m => m.enabled && !config.hiddenModels.includes(m.upstreamId) && routeId(connection, m) === id);
     if (model) return { connection: structuredClone(connection), model: structuredClone(model) };
   }
   const named = publicModelRoutes(config).find(route => route.id === id);

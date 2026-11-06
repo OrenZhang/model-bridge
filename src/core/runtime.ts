@@ -17,6 +17,7 @@ import { ClientConfiguration } from '../clients/configure.js';
 import { LocalCodexAccounts } from '../auth/local-codex.js';
 import { ManagedNetworks } from '../network/managed.js';
 import { managedModels } from './catalog.js';
+import { upstreamProtocols, defaultUpstreamProtocols } from '../shared/upstream-protocols.js';
 import { loadReasoningVault } from './reasoning-key.js';
 
 export async function createRuntime(directory: string, secrets: SecretStore, home: string, systemProxy?: SystemProxyResolver, codexExecutable?: string) {
@@ -152,6 +153,9 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     apiKey = apiKey?.trim();
     if (connection.provider === 'deepseek' && apiKey) apiKey = apiKey.replace(/^Bearer\s+/i, '').trim();
     const previous = store.get().connections.find(c => c.id === connection.id);
+    if (connection.upstreamProtocols || previous?.upstreamProtocols && !connection.upstreamProtocols) {
+      for (const model of connection.models) model.protocols = upstreamProtocols(connection, connection.upstreamProtocols ? model.protocols : defaultUpstreamProtocols(connection));
+    }
     const authChanged = !!previous && [previous.auth, previous.provider, previous.region, previous.auth === 'api-key' ? new URL(previous.baseUrl).origin : previous.baseUrl].join('\0') !== [connection.auth, connection.provider, connection.region, connection.auth === 'api-key' ? new URL(connection.baseUrl).origin : connection.baseUrl].join('\0');
     if (authChanged) { delete connection.accountId; delete connection.accountEmail; delete connection.credentialVersion; delete connection.secretRef; }
     if (connection.auth === 'api-key' && !apiKey && !(connection.secretRef || (!authChanged && previous?.secretRef))) throw new Error(authChanged ? '服务地址或认证方式已改变，请重新填写 API Key。' : '请填写 API Key，密钥不会自动使用其他连接的账号。');
@@ -208,21 +212,23 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     }
     found = found.filter(m => typeof m.id === 'string' && m.id.length > 0).slice(0, 300);
     if (!found.length) throw new Error('服务商返回的模型列表为空，请检查账号权限或手动添加模型 ID。');
-    const defaultProtocols = connection.models[0]?.protocols ?? (connection.auth === 'chatgpt-device' || connection.provider === 'openai' ? ['responses'] : connection.provider === 'kimi' ? ['responses', 'messages', 'chat'] : connection.provider === 'minimax' || connection.provider === 'anthropic' ? ['messages'] : ['chat']);
+    const defaultProtocols = upstreamProtocols(connection, connection.models[0]?.protocols);
     if (closed) return [];
     const updated = await store.update(current => {
       const latest = current.connections.find(c => c.id === id);
-      if (!latest || latest.baseUrl !== connection.baseUrl || latest.auth !== connection.auth || latest.secretRef !== connection.secretRef || (keyVersions.get(id) ?? 0) !== keyVersion) throw new Error('连接已更改，正在重新获取模型。');
+      if (!latest || latest.baseUrl !== connection.baseUrl || latest.auth !== connection.auth || latest.secretRef !== connection.secretRef || JSON.stringify(latest.upstreamProtocols) !== JSON.stringify(connection.upstreamProtocols) || (keyVersions.get(id) ?? 0) !== keyVersion) throw new Error('连接已更改，正在重新获取模型。');
       const existing = new Map(latest.models.map(m => [m.upstreamId, m]));
       for (const m of found) {
         const previous = existing.get(m.id);
+        const protocols = upstreamProtocols(connection, m.protocols ?? defaultProtocols);
+        if (previous && connection.upstreamProtocols) previous.protocols = protocols;
         if (previous && connection.auth === 'subscription' && connection.provider === 'kimi') {
           const refreshed = ModelSchema.parse(m);
           Object.assign(previous, { protocols: refreshed.protocols, thinking: refreshed.thinking, reasoning: refreshed.reasoning, contextWindow: refreshed.contextWindow, tools: refreshed.tools, images: refreshed.images });
         }
         if (previous && connection.auth === 'chatgpt-device') Object.assign(previous, {reasoning: ModelSchema.shape.reasoning.parse(m.reasoning ?? []), images: m.images ?? previous.images});
         if (previous && connection.auth === 'subscription' && connection.provider === 'minimax' && m.reasoning) previous.reasoning = ModelSchema.shape.reasoning.parse(m.reasoning);
-        if (!previous) existing.set(m.id, ModelSchema.parse({ id: m.id, name: m.name, upstreamId: m.id, protocols: m.protocols ?? defaultProtocols, ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}), ...(typeof m.tools === 'boolean' ? { tools: m.tools } : {}), ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...(m.thinking ? {thinking:m.thinking} : {}), images: m.images ?? false }));
+        if (!previous) existing.set(m.id, ModelSchema.parse({ id: m.id, name: m.name, upstreamId: m.id, protocols, ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}), ...(typeof m.tools === 'boolean' ? { tools: m.tools } : {}), ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...(m.thinking ? {thinking:m.thinking} : {}), images: m.images ?? false }));
       }
       latest.models = [...existing.values()];
     });
@@ -269,6 +275,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       const config = await store.update(current => {
         const entry = managedModels(current).find(m => m.id === id);
         if (!entry) throw new Error('模型目录已变化，请刷新后重试。');
+        current.hiddenModels = enabled ? current.hiddenModels.filter(model => model !== id) : [...new Set([...current.hiddenModels, id])];
         for (const member of entry.members) member.model.enabled = enabled;
       });
       await clients.updateCatalog(config);

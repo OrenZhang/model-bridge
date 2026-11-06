@@ -1,6 +1,6 @@
 {
   "name": "model-bridge",
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-alpha.8",
   "private": true,
   "description": "One local model gateway for Codex, Claude Code and other agents.",
   "type": "module",

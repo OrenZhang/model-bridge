@@ -34,10 +34,10 @@ function stream(protocol: Protocol, res: ServerResponse, tool = false, complete 
   res.end();
 }
 async function setup(upstream: Protocol, opts: { tool?: boolean; complete?: boolean; proxy?: boolean; listenHost?: '127.0.0.1' | '0.0.0.0' } = {}) {
-  const requests: { body: any; headers: any }[] = [];
+  const requests: { body: any; headers: any; path?: string }[] = [];
   const upstreamServer = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
-    requests.push({ body: JSON.parse(Buffer.concat(chunks).toString()), headers: req.headers });
+    requests.push({ body: JSON.parse(Buffer.concat(chunks).toString()), headers: req.headers, path: req.url });
     stream(upstream, res, opts.tool, opts.complete ?? true);
   });
   await new Promise<void>(r => upstreamServer.listen(0, '127.0.0.1', r));
@@ -61,6 +61,17 @@ function input(protocol: Protocol, streaming = true, tool = false) {
 async function send(address: string, protocol: Protocol, payload: any) { return fetch(address + endpoint[protocol], { method: 'POST', headers: { authorization: 'Bearer gateway-test-key', 'content-type': 'application/json' }, body: JSON.stringify(payload) }); }
 
 describe('gateway protocol matrix', () => {
+  it('prefers Responses when included in multiple upstream protocols without changing the requested model',async()=>{
+    const {gateway,config,requests}=await setup('responses');
+    config.connections[0]!.upstreamProtocols=['chat','responses'];config.connections[0]!.models[0]!.protocols=['chat'];
+    const response=await send(gateway.address,'responses',input('responses'));
+    expect(response.status).toBe(200);expect(await response.text()).toContain('你好');expect(requests[0]!.path).toBe('/v1/responses');expect(requests[0]!.body.model).toBe('vendor-model');
+  });
+  it.each(['responses','messages','chat'] as const)('accepts %s at one chat-only connection and translates automatically',async source=>{
+    const {gateway,config,requests}=await setup('chat');config.connections[0]!.upstreamProtocols=['chat'];
+    const response=await send(gateway.address,source,input(source));
+    expect(response.status).toBe(200);expect(await response.text()).toContain('你好');expect(requests[0]!.path).toBe('/v1/chat/completions');expect(requests[0]!.body.model).toBe('vendor-model');
+  });
   for (const source of ['responses', 'messages', 'chat'] as const) for (const target of ['responses', 'messages', 'chat'] as const) {
     it(`${source} → ${target} streams text and records actual usage`, async () => {
       const { gateway, requests, usage } = await setup(target);
@@ -106,6 +117,8 @@ describe('gateway protocol matrix', () => {
   it('LAN mode exposes interface addresses and still requires a client key', async () => {
     const { gateway } = await setup('chat', { listenHost: '0.0.0.0' });
     expect(gateway.lanAddresses().every(address => !address.includes('0.0.0.0'))).toBe(true);
+    expect(gateway.lanInterfaces().map(item=>item.address)).toEqual(gateway.lanAddresses());
+    expect(gateway.lanInterfaces().every(item=>!!item.name && typeof item.virtual==='boolean')).toBe(true);
     const ip = Object.values(networkInterfaces()).flat().find(item => item?.family === 'IPv4' && !item.internal)?.address;
     const address = ip ? `http://${ip}:${new URL(gateway.address).port}` : gateway.address;
     expect((await fetch(address + '/v1/models')).status).toBe(401);

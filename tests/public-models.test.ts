@@ -12,6 +12,12 @@ it('merges exactly the same model ID across providers, auth types and addresses 
   expect(publicModelRoutes(c).map(r=>r.id)).toEqual(['gpt-test']);expect(poolCandidates(c,'gpt-test')!.map(r=>r.connection.id)).toEqual(['paid']);
   c.connections[1]!.enabled=false;expect(()=>resolveRoute(c,'gpt-test')).toThrow('unavailable');
 });
+it('does not resolve a globally hidden model name through a conflicting legacy route',()=>{
+ const c=config();c.hiddenModels=['official/gpt'];
+ expect(poolCandidates(c,'official/gpt')).toBeUndefined();
+ expect(()=>resolveRoute(c,'official/gpt')).toThrow('unavailable');
+ expect(resolveRoute(c,'gpt-test').model.upstreamId).toBe('gpt-test');
+});
 it('balances merged channels, preserves affinity and migrates existing pool bindings',async()=>{
   const c=config();const route=publicModelRoutes(c)[0]!;const candidates=poolCandidates(c,route.id)!;
   const router=new PoolRouter();const vault=new ReasoningVault();const old=modelGroupId(candidates[0]!.connection,candidates[0]!.model);

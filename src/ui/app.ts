@@ -1,6 +1,8 @@
 import { modelModeOptions, modeLabels, type ReasoningMode } from '../shared/reasoning-modes.js';
 import { connectionState } from './connection-state.js';
 import type { UpdateState } from '../shared/updates.js';
+import { serviceAddresses, preferredServiceAddress } from '../shared/service-addresses.js';
+import { upstreamProtocols, type UpstreamProtocol } from '../shared/upstream-protocols.js';
 declare global { interface Window { modelBridge: { call: (operation: string, payload?: unknown) => Promise<any>; onUpdate: (listener: (state: UpdateState) => void) => () => void } } }
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 const escape = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -11,6 +13,7 @@ let state: any; let page = 'connections'; let days = 60; let editing: any; let a
 const usageFilters: Record<string, string> = {};
 let editingModel: { connectionId: string; modelId: string } | undefined;
 let selectedAddress = '';
+let selectedAddressManual = false; let lastLanEnabled = false;
 const clientTabs = [{ id: 'codex', name: 'Codex' }, { id: 'claude', name: 'Claude Code' }];
 let clientTab = 'codex'; let clientBusy = false;
 let connectionSource = 'login'; let connectionSaving = false; let reuseSnapshot = '';
@@ -75,9 +78,11 @@ function stats() {
   return `<div class="stats"><div class="stat"><div class="label">请求次数</div><div class="number">${number(s.requests)}</div><div class="sub">近 ${days} 天 · 经过本网关</div></div><div class="stat"><div class="label">输入 / 输出 Token</div><div class="number">${number(s.inputTokens)} <span style="font-size:17px;color:#9aa796">/</span> ${number(s.outputTokens)}</div><div class="sub">${s.unknownUsage ? `${s.unknownUsage} 次用量未知` : '以厂商返回用量为准'}</div></div><div class="stat"><div class="label">成功率</div><div class="number">${s.requests ? Math.round(s.successful / s.requests * 100) + '%' : '—'}</div><div class="sub">${s.requests ? `${s.successful} 次请求成功` : '暂无请求记录'}</div></div><div class="stat"><div class="label">估算费用</div><div class="number">${s.requests && s.unpricedRequests < s.requests ? '$' + s.estimatedCostUsd.toFixed(4) : '—'}</div><div class="sub">${s.unpricedRequests ? `${s.unpricedRequests} 次请求未计价` : '配置价格后显示估算'}</div></div></div>`;
 }
 function endpointCards() {
-  const addresses = [state.address, ...(state.lanAddresses ?? [])];
-  if (!addresses.includes(selectedAddress)) selectedAddress = state.address;
-  return `<div class="panel endpoint-panel"><div class="endpoint-toolbar"><strong>统一接口</strong><div class="endpoint-controls"><label class="toggle"><input id="lan-access" type="checkbox" ${state.config.listenHost === '0.0.0.0' ? 'checked' : ''} />局域网访问</label><select id="service-address" aria-label="服务地址">${addresses.map((address: string) => `<option value="${escape(address)}">${escape(address)}${address === state.address ? ' · 本机' : ' · 局域网'}</option>`).join('')}</select></div></div><div class="table-wrap"><table class="endpoint-table"><thead><tr><th>接口</th><th>客户端 Base URL</th><th>请求路径</th></tr></thead><tbody>${[['responses', 'Responses', '/v1', '/v1/responses'], ['messages', 'Messages', '', '/v1/messages'], ['chat', 'Chat Completions', '/v1', '/v1/chat/completions']].map(([id, name, base, endpoint]) => `<tr><td><strong>${name}</strong></td><td><div class="address-cell"><code>${escape(selectedAddress + base)}</code><button class="copy-button" data-action="copy-address" data-id="${id}" data-kind="base" aria-label="复制 ${name} 基础地址" title="复制基础地址">复制</button></div></td><td><div class="address-cell"><code>${endpoint}</code><button class="copy-button" data-action="copy-address" data-id="${id}" data-kind="endpoint" aria-label="复制 ${name} 完整请求地址" title="复制完整请求地址">复制</button></div></td></tr>`).join('')}</tbody></table></div>${state.config.listenHost === '0.0.0.0' ? '<div class="endpoint-note">监听 0.0.0.0 · 其他设备使用网卡地址和访问密钥连接，系统防火墙需允许该端口。</div>' : ''}</div>`;
+  const addresses = serviceAddresses(state);
+  const lanEnabled = state.config.listenHost === '0.0.0.0';
+  if (!addresses.some(item=>item.address===selectedAddress) || lanEnabled && (!selectedAddressManual || !lastLanEnabled)) selectedAddress = preferredServiceAddress(state);
+  lastLanEnabled = lanEnabled;
+  return `<div class="panel endpoint-panel"><div class="endpoint-toolbar"><strong>统一接口</strong><div class="endpoint-controls"><label class="toggle"><input id="lan-access" type="checkbox" ${state.config.listenHost === '0.0.0.0' ? 'checked' : ''} />局域网访问</label><select id="service-address" aria-label="服务地址">${addresses.map(item => `<option value="${escape(item.address)}">${escape(item.label)}</option>`).join('')}</select></div></div><div class="table-wrap"><table class="endpoint-table"><thead><tr><th>接口</th><th>客户端 Base URL</th><th>请求路径</th></tr></thead><tbody>${[['responses', 'Responses', '/v1', '/v1/responses'], ['messages', 'Messages', '', '/v1/messages'], ['chat', 'Chat Completions', '/v1', '/v1/chat/completions']].map(([id, name, base, endpoint]) => `<tr><td><strong>${name}</strong></td><td><div class="address-cell"><code>${escape(selectedAddress + base)}</code><button class="copy-button" data-action="copy-address" data-id="${id}" data-kind="base" aria-label="复制 ${name} 基础地址" title="复制基础地址">复制</button></div></td><td><div class="address-cell"><code>${endpoint}</code><button class="copy-button" data-action="copy-address" data-id="${id}" data-kind="endpoint" aria-label="复制 ${name} 完整请求地址" title="复制完整请求地址">复制</button></div></td></tr>`).join('')}</tbody></table></div>${state.config.listenHost === '0.0.0.0' ? '<div class="endpoint-note">监听 0.0.0.0 · 其他设备使用网卡地址和访问密钥连接，系统防火墙需允许该端口。</div>' : ''}</div>`;
 }
 function localAccountPanel() {
   return `<div class="section-heading"><h3>本机 Codex 登录</h3><button type="button" class="secondary" data-action="detect-local">重新检测</button></div><div class="panel local-accounts">${(state.localAccounts ?? []).map((account: any) => `<div class="local-account"><div><strong>${escape(account.email ?? (account.kind === 'api-key' ? 'OpenAI API Key 登录' : '未检测到可复用账号'))}</strong>${account.plan ? `<span class="tag">${escape(account.plan)}</span>` : ''}<p>当前连接：${escape(account.provider === 'model_bridge' ? 'Model Bridge' : account.provider === 'openai' ? '官方 OpenAI / ChatGPT' : account.provider)}${account.model ? ' · ' + escape(account.model) : ''}</p><small>${escape(account.directory)}</small>${account.message ? `<p class="hint">${escape(account.message)}</p>` : ''}</div><button class="${account.imported ? 'secondary' : 'primary'}" type="button" data-action="import-local" data-id="${escape(account.id)}" ${!account.canImport || account.imported ? 'disabled' : ''}>${account.imported ? '已接入账号' : '复用此账号'}</button></div>`).join('') || '<div class="empty">正在检测本机 Codex 配置与登录状态…</div>'}</div><p class="hint">保存独立登录副本，作为一个连接添加。若登录失效，可在连接中重新授权。</p>`;
@@ -143,10 +148,10 @@ function clientsPage() {
 }
 async function updatePortableConfig(preferLan = false) {
   const revision = ++portableRevision;
-  const addresses = [state.address, ...(state.lanAddresses ?? [])];
-  if (preferLan || !addresses.includes(portableAddress)) portableAddress = state.lanAddresses?.[0] ?? state.address;
+  const addresses = serviceAddresses(state);
+  if (preferLan || !addresses.some(item=>item.address===portableAddress)) portableAddress = preferredServiceAddress(state);
   const selector = $<HTMLSelectElement>('#portable-address');
-  selector.innerHTML = addresses.map((address: string) => `<option value="${escape(address)}">${escape(address)} · ${address === state.address ? '本机' : '局域网'}</option>`).join('');
+  selector.innerHTML = addresses.map(item => `<option value="${escape(item.address)}">${escape(item.label)}</option>`).join('');
   selector.value = portableAddress;
   const keys=(state.accessKeys??[]).filter((k:any)=>k.enabled);
   if(!keys.some((k:any)=>k.id===portableKeyId))portableKeyId=keys[0]?.id??'';
@@ -184,7 +189,7 @@ function render() {
   if (page === 'overview') {
     const access = $<HTMLInputElement>('#lan-access'); access.onchange = () => void action('service.lan', { enabled: access.checked }, '服务监听设置已更新').catch(() => refresh());
     const keySelect=$<HTMLSelectElement>('#service-key');if(keySelect){if(![...keySelect.options].some(o=>o.value===portableKeyId))portableKeyId=keySelect.options[0]?.value??'';keySelect.value=portableKeyId;keySelect.onchange=()=>{portableKeyId=keySelect.value;};}
-    const addresses = $<HTMLSelectElement>('#service-address'); addresses.value = selectedAddress; addresses.onchange = () => { selectedAddress = addresses.value; render(); };
+    const addresses = $<HTMLSelectElement>('#service-address'); addresses.value = selectedAddress; addresses.onchange = () => { selectedAddress = addresses.value; selectedAddressManual = true; render(); };
   }
   if (page === 'usage') {
     const filters = document.createElement('div'); filters.className = 'usage-filters';
@@ -276,7 +281,10 @@ function openConnection(id?: string, provider?: string) {
     for (const name of ['name', 'provider', 'baseUrl', 'region']) field(name).value = editing[name];
     field('auth').value = editing.auth === 'chatgpt-device' && editing.loginMethod === 'browser' ? 'chatgpt-browser' : editing.auth;
     field('proxy').value = choiceValue(editing.proxy); field('modelIds').value = editing.models.map((m: any) => m.upstreamId).join('\n');
-    field('protocol').value = editing.models[0]?.protocols.length === 3 ? 'all' : editing.models[0]?.protocols[0] ?? 'chat';
+    field('upstreamMode').value = editing.upstreamProtocols?.length ? 'custom' : 'auto';
+    const selected = upstreamProtocols(editing, editing.models[0]?.protocols);
+    document.querySelectorAll<HTMLInputElement>('[name="upstreamProtocol"]').forEach(input=>{input.checked=selected.includes(input.value as UpstreamProtocol);});
+    updateUpstreamControls();
     $<HTMLSelectElement>('#api-auth').value = editing.auth === 'none' ? 'none' : 'api-key';
     setConnectionSource(['chatgpt-device', 'subscription'].includes(editing.auth) ? 'login' : 'api');
     $('#connection-manage-actions').innerHTML = `<label class="toggle"><input type="checkbox" name="enabled" ${editing.enabled ? 'checked' : ''} />使用此连接</label>${['chatgpt-device', 'subscription'].includes(editing.auth) ? '<button type="button" class="secondary" data-action="login" data-id="' + escape(editing.id) + '">重新登录</button>' : ''}<button type="button" class="secondary" data-action="discover" data-id="${escape(editing.id)}">同步模型</button><button type="button" class="plain danger" data-action="delete" data-id="${escape(editing.id)}">移除连接</button>`;
@@ -287,13 +295,17 @@ function openConnection(id?: string, provider?: string) {
 function providerChanged() {
   const form = $<HTMLFormElement>('#connection-form'); const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const provider = field('provider').value;
-  const defaults: Record<string, [string, string]> = { openai: ['https://api.openai.com/v1', 'responses'], kimi: ['https://api.kimi.com/coding/v1', 'all'], minimax: ['https://api.minimax.io/anthropic/v1', 'messages'], anthropic: ['https://api.anthropic.com/v1', 'messages'], deepseek:['https://api.deepseek.com/v1','chat'], custom: ['', 'chat'] };
-  field('baseUrl').value = defaults[provider]![0]; field('protocol').value = defaults[provider]![1];
+  const defaults: Record<string, string> = { openai: 'https://api.openai.com/v1', kimi: 'https://api.kimi.com/coding/v1', minimax: 'https://api.minimax.io/anthropic/v1', anthropic: 'https://api.anthropic.com/v1', deepseek:'https://api.deepseek.com/v1', custom: '' };
+  field('baseUrl').value = defaults[provider]!; field('upstreamMode').value = 'auto';
   field('auth').value = provider === 'openai' ? 'chatgpt-browser' : ['kimi', 'minimax'].includes(provider) ? 'subscription' : 'api-key';
   $<HTMLSelectElement>('#api-auth').value = 'api-key';
   setConnectionSource(['openai', 'kimi', 'minimax'].includes(provider) ? 'login' : 'api');
+  const protocols = upstreamProtocols({provider,auth:'api-key',baseUrl:field('baseUrl').value});
+  document.querySelectorAll<HTMLInputElement>('[name="upstreamProtocol"]').forEach(input=>{input.checked=protocols.includes(input.value as UpstreamProtocol);});
+  updateUpstreamControls();
   renderReasoningSettings();
 }
+function updateUpstreamControls() { $('#upstream-protocols').hidden = $<HTMLSelectElement>('[name="upstreamMode"]').value !== 'custom'; }
 document.addEventListener('keydown', event => {
   const target = (event.target as HTMLElement).closest<HTMLElement>('[role="tab"]');
   if (!target || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -364,6 +376,7 @@ document.addEventListener('click', event => {
   })();
 });
 $<HTMLSelectElement>('select[name="provider"]').onchange = providerChanged;
+$<HTMLSelectElement>('select[name="upstreamMode"]').onchange = updateUpstreamControls;
 $<HTMLSelectElement>('#api-auth').onchange = () => setConnectionSource('api');
 $<HTMLFormElement>('#connection-form').onsubmit = event => {
   event.preventDefault();
@@ -371,10 +384,13 @@ $<HTMLFormElement>('#connection-form').onsubmit = event => {
   connectionSaving = true; $<HTMLButtonElement>('#save-connection').disabled = true;
   void (async () => {
     const form = new FormData(event.target as HTMLFormElement); const field = (name: string) => String(form.get(name) ?? '').trim();
-    const id = editing?.id ?? `account-${crypto.randomUUID().slice(0, 8)}`; const loginMethod = field('auth') === 'chatgpt-browser' ? 'browser' : 'device'; const auth = field('auth').startsWith('chatgpt-') ? 'chatgpt-device' : field('auth'); const protocol = field('protocol');
+    const id = editing?.id ?? `account-${crypto.randomUUID().slice(0, 8)}`; const loginMethod = field('auth') === 'chatgpt-browser' ? 'browser' : 'device'; const auth = field('auth').startsWith('chatgpt-') ? 'chatgpt-device' : field('auth');
+    const picked = field('upstreamMode') === 'custom' && !['subscription','chatgpt-device'].includes(auth) ? form.getAll('upstreamProtocol').map(String) as UpstreamProtocol[] : undefined;
+    const configured = picked ? [...(editing?.upstreamProtocols ?? []).filter((protocol: UpstreamProtocol) => picked.includes(protocol)), ...picked.filter(protocol => !editing?.upstreamProtocols?.includes(protocol))] as UpstreamProtocol[] : undefined;
+    if (configured && !configured.length) { toast('请至少选择一个上游接口，或使用自动适配。',true); connectionSaving=false; $<HTMLButtonElement>('#save-connection').disabled=false; return; }
     const existing = new Map((editing?.models ?? []).map((m: any) => [m.upstreamId, m]));
-    const models = [...new Set(field('modelIds').split('\n').map(x => x.trim()).filter(Boolean))].map(model => ({ ...(existing.get(model) as object ?? { id: model, name: model, upstreamId: model }), protocols: auth === 'subscription' ? [field('provider') === 'minimax' ? 'messages' : 'chat'] : auth === 'chatgpt-device' ? ['responses'] : protocol === 'all' ? ['responses', 'messages', 'chat'] : [protocol] }));
-    try { await action('connection.save', { connection: { ...editing, id, name: field('name'), provider: field('provider'), auth, loginMethod, region: field('region') || 'cn', enabled: editing ? form.get('enabled') === 'on' : true, baseUrl: auth === 'chatgpt-device' ? 'https://chatgpt.com/backend-api/codex' : auth === 'subscription' ? field('provider') === 'kimi' ? (field('region') === 'global' ? 'https://api.kimi.ai/coding/v1' : 'https://api.kimi.com/coding/v1') : (field('region') === 'global' ? 'https://agent.minimax.io/mavis/api/v1/llm/v1' : 'https://agent.minimax.cn/mavis/api/v1/llm/v1') : field('baseUrl'), proxy: proxyChoice(field('proxy')), reasoningModes:Object.fromEntries([...document.querySelectorAll<HTMLSelectElement>('[data-reasoning-model]')].filter(e=>e.value!=='client').map(e=>[e.dataset.reasoningModel!,e.value])), models }, apiKey: auth === 'api-key' ? field('apiKey') : undefined }, '连接已保存'); $<HTMLDialogElement>('#connection-dialog').close(); if (['chatgpt-device', 'subscription'].includes(auth) && !editing) { await showLogin(id!); } } catch { /* shown */ } finally { connectionSaving = false; $<HTMLButtonElement>('#save-connection').disabled = false; }
+    const models = [...new Set(field('modelIds').split('\n').map(x => x.trim()).filter(Boolean))].map(model => ({ ...(existing.get(model) as object ?? { id: model, name: model, upstreamId: model }), protocols: upstreamProtocols({provider:field('provider'),auth,baseUrl:field('baseUrl'),upstreamProtocols:configured}, editing?.upstreamProtocols && !configured ? undefined : (existing.get(model) as any)?.protocols) }));
+    try { await action('connection.save', { connection: { ...editing, id, name: field('name'), provider: field('provider'), auth, loginMethod, upstreamProtocols: configured, region: field('region') || 'cn', enabled: editing ? form.get('enabled') === 'on' : true, baseUrl: auth === 'chatgpt-device' ? 'https://chatgpt.com/backend-api/codex' : auth === 'subscription' ? field('provider') === 'kimi' ? (field('region') === 'global' ? 'https://api.kimi.ai/coding/v1' : 'https://api.kimi.com/coding/v1') : (field('region') === 'global' ? 'https://agent.minimax.io/mavis/api/v1/llm/v1' : 'https://agent.minimax.cn/mavis/api/v1/llm/v1') : field('baseUrl'), proxy: proxyChoice(field('proxy')), reasoningModes:Object.fromEntries([...document.querySelectorAll<HTMLSelectElement>('[data-reasoning-model]')].filter(e=>e.value!=='client').map(e=>[e.dataset.reasoningModel!,e.value])), models }, apiKey: auth === 'api-key' ? field('apiKey') : undefined }, '连接已保存'); $<HTMLDialogElement>('#connection-dialog').close(); if (['chatgpt-device', 'subscription'].includes(auth) && !editing) { await showLogin(id!); } } catch { /* shown */ } finally { connectionSaving = false; $<HTMLButtonElement>('#save-connection').disabled = false; }
   })();
 };
 $<HTMLFormElement>('#proxy-form').onsubmit = event => {

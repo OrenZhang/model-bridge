@@ -8,7 +8,7 @@ import { mergedModelId, modelGroupId, poolCandidates, reasoningScope } from '../
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { networkInterfaces } from 'node:os';
+import { LanAddresses } from '../network/lan-addresses.js';
 import { BridgeError, resolveRoute, type Config, type Connection, type Protocol } from '../core/config.js';
 import { codexCatalog, openaiCatalog, anthropicCatalog } from '../core/catalog.js';
 import { Network } from '../core/network.js';
@@ -17,6 +17,7 @@ import { UsageStore, unknownTokens, usageTokens, estimatedCost, type Tokens } fr
 import { applyThinking, decodeRequest, encodeRequest, UpstreamDecoder, DownstreamEncoder } from './codec.js';
 import { SSEDecoder, sse } from './sse.js';
 import { ReasoningVault, hasGatewayReasoning } from './reasoning.js';
+import { upstreamProtocols } from '../shared/upstream-protocols.js';
 
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const paths: Record<Protocol, string> = { responses: '/responses', messages: '/messages', chat: '/chat/completions' };
@@ -98,7 +99,8 @@ export async function startGateway(options: GatewayOptions) {
       let controlled: any;
       try { controlled = controlledRequest(connection,model,protocol,input); } catch(error) { throw new BridgeError(400,'invalid_reasoning_policy',String((error as Error).message)); }
       if (input.tools?.length && !model.tools) throw new BridgeError(400, 'tools_unsupported', 'This model does not support tool calls.');
-      const upstream = model.protocols.includes(protocol) ? protocol : model.protocols[0]!;
+      const supported = upstreamProtocols(connection, model.protocols);
+      const upstream = supported.includes(protocol) ? protocol : supported[0]!;
       const translated = upstream !== protocol || hasGatewayReasoning(input);
       const reasoning = reasoningVault.context(reasoningScope(clientId, route), upstream, connection.provider, model.upstreamId);
       const canonical = translated ? decodeRequest(protocol, controlled, reasoning) : undefined;
@@ -230,8 +232,11 @@ export async function startGateway(options: GatewayOptions) {
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.config().port, options.config().listenHost, resolve); });
   address = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const port = (server.address() as AddressInfo).port;
+  const lan = new LanAddresses(port);
+  if (options.config().listenHost === '0.0.0.0') await lan.refresh();
   return { address, activeRequests: (connectionIds?: readonly string[]) => connectionIds ? [...activeConnections.values()].filter(id => connectionIds.includes(id)).length : inflight.size,
-    lanAddresses: () => options.config().listenHost === '0.0.0.0' ? [...new Set(Object.values(networkInterfaces()).flatMap(values => (values ?? []).filter(item => item.family === 'IPv4' && !item.internal).map(item => `http://${item.address}:${port}`)))] : [],
+    lanInterfaces: () => options.config().listenHost === '0.0.0.0' ? lan.list() : [],
+    lanAddresses: () => options.config().listenHost === '0.0.0.0' ? lan.list().map(item=>item.address) : [],
     async close() {
       for (const controller of inflight) controller.abort();
       server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
