@@ -43,3 +43,12 @@ it('a failed account proxy does not fall back to a direct connection', async () 
   const { network, config, url, requests } = await setup(); config.proxies[0]!.url = 'http://127.0.0.1:1';
   await expect(network.request(config.connections[0]!, url)).rejects.toMatchObject({ code: 'upstream_connection_failed' }); expect(requests).toHaveLength(0);
 });
+it('a broken managed subscription cannot affect explicit direct or independent proxy connections',async()=>{
+ const {config,url,tunnels}=await setup();
+ config.networkProfiles.push({id:'broken',name:'Broken',source:'config',nodes:['node'],selected:'node',selectionMode:'auto',secretRef:'private',updatedAt:'now'});config.defaultProxy={mode:'managed',profileId:'broken'};
+ const managed=vi.fn(async()=>{throw new Error('subscription unavailable')});
+ const isolated=new Network(()=>config,{get:async()=>undefined},undefined,managed);cleanup.push(()=>isolated.close());
+ await expect(isolated.request({...config.connections[0]!,proxy:{mode:'managed',profileId:'broken'}},url)).rejects.toMatchObject({code:'upstream_connection_failed'});
+ expect(await(await isolated.request({...config.connections[0]!,proxy:{mode:'direct'}},url)).text()).toBe('connected');
+ expect(await(await isolated.request(config.connections[0]!,url)).text()).toBe('connected');expect(managed).toHaveBeenCalledTimes(1);expect(tunnels).toHaveLength(1);
+});

@@ -169,7 +169,7 @@ async function validateProvider(gateway, provider, route, catalog) {
   const env = { ...process.env, CODEX_HOME: codexHome };
   for (const key of ['OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'OPENAI_BASE_URL', 'OPENAI_IDENTITY_TOKEN_FILE', 'MODEL_BRIDGE_TEST_GATEWAY_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[key];
   env.NO_PROXY = 'localhost,127.0.0.1,::1'; env.no_proxy = env.NO_PROXY;
-  const child = spawn(codexBinary(), ['app-server', '--listen', 'stdio://'], { env, cwd: workspace, stdio: 'pipe', windowsHide: true });
+  const child = spawn(process.env.MODEL_BRIDGE_VALIDATION_CODEX_BINARY || codexBinary(), ['app-server', '--listen', 'stdio://'], { env, cwd: workspace, stdio: 'pipe', windowsHide: true });
   // Register immediately: exit can precede stdio closure, and close may occur
   // before validation reaches finally (including when spawning fails).
   const childClosed = new Promise(resolve => child.once('close', resolve));

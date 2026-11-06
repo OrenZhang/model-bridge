@@ -7,6 +7,7 @@ import path from 'node:path';
 import { gt, prerelease, valid } from 'semver';
 import type { UpdateCheckResult } from 'electron-updater';
 import type { UpdateState } from '../shared/updates.js';
+import { setTimeout as delay } from 'node:timers/promises';
 type DownloadCancellation = NonNullable<UpdateCheckResult['cancellationToken']>;
 
 export const RELEASES_URL = 'https://github.com/OrenZhang/model-bridge/releases';
@@ -26,6 +27,9 @@ export interface UpdateOptions {
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
   installMacUpdate: (file: string, version: string, sha512: string) => Promise<void>; installAndRestart: () => Promise<void>;
   changed?: (state: UpdateState) => void;
+  prepareNetwork?: () => Promise<'proxy' | 'direct'>;
+  directNetwork?: () => Promise<void>;
+  readyToInstall?: () => boolean;
 }
 
 export function macInstaller(info: ReleaseInfo, arch: string) {
@@ -49,6 +53,8 @@ export class DesktopUpdates {
   private controller?: AbortController;
   private cancellation?: DownloadCancellation;
   private closed = false;
+  private updating?: Promise<void>;
+  private installWait?: AbortController;
   constructor(private options: UpdateOptions) {
     this.state = { currentVersion: options.version, installMode: 'restart', phase: options.packaged ? 'idle' : 'development' };
     const engine = options.engine;
@@ -81,11 +87,35 @@ export class DesktopUpdates {
     const message = /404|ERR_UPDATER_LATEST_VERSION_NOT_FOUND|No published versions/.test(raw) ? '当前更新通道尚未发布安装包，可稍后重试。' : raw.slice(0, 500);
     this.set({ phase: 'error', message, retry });
   }
+  private async withNetwork<T>(operation: () => Promise<T>): Promise<T> {
+    let mode: 'proxy' | 'direct' = 'direct';
+    try { mode = await this.options.prepareNetwork?.() ?? 'direct'; }
+    catch { await this.options.directNetwork?.(); }
+    if (this.closed) throw new Error('更新已取消。');
+    this.set({ networkLabel: mode === 'proxy' ? '系统代理' : '直连' });
+    try { return await operation(); }
+    catch (error) {
+      if (this.closed || mode !== 'proxy' || !this.options.directNetwork) throw error;
+      await this.options.directNetwork();
+      this.set({ networkLabel: '代理连接失败，改用直连重试', ...(this.state.phase === 'downloading' ? { percent: 0, transferred: 0 } : {}) });
+      return operation();
+    }
+  }
+  checkAndInstall(): Promise<void> {
+    if (this.updating) return this.updating;
+    this.updating = (async () => {
+      if (!['downloaded', 'downloading'].includes(this.state.phase) && !(this.state.phase === 'error' && this.state.retry === 'install')) await this.check();
+      if (this.closed) return;
+      if (this.state.phase === 'available' || (this.state.phase === 'error' && this.state.retry === 'download') || this.state.phase === 'downloading') await this.download();
+      if (!this.closed && (this.state.phase === 'downloaded' || (this.state.phase === 'error' && this.state.retry === 'install'))) await this.install();
+    })().finally(() => { this.updating = undefined; });
+    return this.updating;
+  }
   check(): Promise<void> {
     if (this.checking) return this.checking;
     if (this.closed || !this.options.packaged || ['downloading', 'downloaded', 'installing'].includes(this.state.phase)) return Promise.resolve();
     this.set({ phase: 'checking', message: undefined, retry: undefined, recovered: false });
-    this.checking = this.options.engine.checkForUpdates().then(result => {
+    this.checking = this.withNetwork(() => this.options.engine.checkForUpdates()).then(result => {
       if (!result) throw new Error('请使用已安装的 NSIS、AppImage 或 Debian 版本检查更新。');
       this.cancellation = result.cancellationToken;
       this.set({ checkedAt: new Date().toISOString() });
@@ -96,7 +126,7 @@ export class DesktopUpdates {
     if (this.downloading) return this.downloading;
     if (this.closed || !this.options.packaged || !this.info || !['available', 'error'].includes(this.state.phase)) return Promise.resolve();
     this.set({ phase: 'downloading', percent: 0, message: undefined, retry: undefined });
-    this.downloading = (this.options.platform === 'darwin' ? this.downloadMac() : this.options.engine.downloadUpdate(this.cancellation).then(() => {}))
+    this.downloading = this.withNetwork(() => this.options.platform === 'darwin' ? this.downloadMac() : this.options.engine.downloadUpdate(this.cancellation).then(() => {}))
       .catch(error => { this.fail(error, 'download'); }).finally(() => { this.downloading = undefined; });
     return this.downloading;
   }
@@ -130,11 +160,18 @@ export class DesktopUpdates {
     if (this.closed || !(this.state.phase === 'downloaded' || (this.state.phase === 'error' && this.state.retry === 'install'))) return;
     this.set({ phase: 'installing', message: undefined, retry: undefined });
     try {
+      this.installWait = new AbortController();
+      while (!this.closed && this.options.readyToInstall && !this.options.readyToInstall()) {
+        this.set({ message: '正在等待进行中的模型请求完成，随后自动安装并重启。' });
+        await delay(250, undefined, { signal: this.installWait.signal });
+      }
+      if (this.closed) return;
       if (this.options.platform === 'darwin') {
         if (!this.downloaded || await digest(this.downloaded.file).catch(() => '') !== this.downloaded.sha512) { this.downloaded = undefined; throw new Error('安装包已更改或丢失，请重新下载。'); }
         await this.options.installMacUpdate(this.downloaded.file, this.info!.version, this.downloaded.sha512);
       } else await this.options.installAndRestart();
     } catch (error) { this.fail(error, this.options.platform === 'darwin' && !this.downloaded ? 'download' : 'install'); }
+    finally { this.installWait = undefined; }
   }
-  close() { this.closed = true; this.controller?.abort(); this.cancellation?.cancel(); }
+  close() { this.closed = true; this.controller?.abort(); this.installWait?.abort(); this.cancellation?.cancel(); }
 }

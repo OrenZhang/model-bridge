@@ -121,7 +121,20 @@ export class DeviceLogin extends EventEmitter {
       throw new BridgeError(401, 'chatgpt_login_required', 'Complete ChatGPT login for this account.');
     }
   }
-  async catalog() { await this.start(); return this.rpc('model/list', { includeHidden: false }); }
+  async catalog() {
+    await this.start();
+    const models = new Map<string, any>(); const cursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const result = await this.rpc('model/list', { includeHidden: true, limit: 100, ...(cursor ? { cursor } : {}) });
+      if (!Array.isArray(result.data)) throw new Error('Codex 没有返回有效的模型目录，请重新同步。');
+      for (const model of result.data) if (typeof model.model === 'string') models.set(model.model, model);
+      if (!result.nextCursor) return { data: [...models.values()], nextCursor: null };
+      if (typeof result.nextCursor !== 'string' || cursors.has(result.nextCursor)) throw new Error('Codex 模型目录分页异常，请重试。');
+      cursor = result.nextCursor; cursors.add(result.nextCursor as string);
+    }
+    throw new Error('Codex 模型目录分页过多，请重试。');
+  }
   async cancel() {
     this.publish({ phase: 'cancelled' });
     // This helper is dedicated to one account. Closing it also stops device-code polling.

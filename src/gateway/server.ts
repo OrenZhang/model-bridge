@@ -51,6 +51,7 @@ export interface GatewayOptions {
 export async function startGateway(options: GatewayOptions) {
   const deviceId=options.config().deviceId??randomUUID();
   const inflight = new Set<AbortController>();
+  const activeConnections = new Map<AbortController, string>();
   const handlers = new Set<Promise<void>>();
   const poolRouter = options.poolRouter ?? new PoolRouter();
   const reasoningVault = options.reasoningVault ?? new ReasoningVault();
@@ -93,6 +94,7 @@ export async function startGateway(options: GatewayOptions) {
       const previousPools = candidates?.length ? options.config().connections.flatMap(connection=>connection.models.filter(model=>model.upstreamId===candidates[0]!.model.upstreamId).map(model=>modelGroupId(connection,model))) : [];
       route = candidates?.length ? await poolRouter.select(mergedModelId(candidates[0]!.model.upstreamId), candidates, input, clientId, protocol, reasoningVault, typeof session === 'string' ? session : undefined, [...new Set(previousPools)]) : resolveRoute(options.config(), selected);
       const { connection, model } = route;
+      activeConnections.set(controller, connection.id);
       let controlled: any;
       try { controlled = controlledRequest(connection,model,protocol,input); } catch(error) { throw new BridgeError(400,'invalid_reasoning_policy',String((error as Error).message)); }
       if (input.tools?.length && !model.tools) throw new BridgeError(400, 'tools_unsupported', 'This model does not support tool calls.');
@@ -221,14 +223,14 @@ export async function startGateway(options: GatewayOptions) {
       }
     } finally {
       if (route && status === 'success') options.onConnectionResult?.(route.connection, {ok:true});
-      controller.abort(); inflight.delete(controller);
+      controller.abort(); inflight.delete(controller); activeConnections.delete(controller);
       if (route && protocol) await options.usage.append({ id: requestId, startedAt: new Date(Date.now() - (performance.now() - started)).toISOString(), clientId, connectionId: route.connection.id, provider: route.connection.provider, model: selected, upstreamModel: route.model.upstreamId, protocol, status, durationMs: Math.round(performance.now() - started), firstByteMs: firstByte, tokens, estimatedCostUsd: estimatedCost(route.model, tokens), ...(errorCode ? { errorCode } : {}) }).catch(() => options.onUsageError?.());
     }
   }
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.config().port, options.config().listenHost, resolve); });
   address = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const port = (server.address() as AddressInfo).port;
-  return { address, activeRequests: () => inflight.size,
+  return { address, activeRequests: (connectionIds?: readonly string[]) => connectionIds ? [...activeConnections.values()].filter(id => connectionIds.includes(id)).length : inflight.size,
     lanAddresses: () => options.config().listenHost === '0.0.0.0' ? [...new Set(Object.values(networkInterfaces()).flatMap(values => (values ?? []).filter(item => item.family === 'IPv4' && !item.internal).map(item => `http://${item.address}:${port}`)))] : [],
     async close() {
       for (const controller of inflight) controller.abort();

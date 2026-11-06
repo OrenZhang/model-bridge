@@ -73,3 +73,15 @@ it('keeps separate account credential directories and cancels only its own helpe
   expect(second.processes[0].kill).not.toHaveBeenCalled();
   expect(second.login.state.phase).toBe('waiting');
 });
+it('reads all model pages including picker-hidden models and preserves reasoning metadata',async()=>{
+ const {login,requests,processes}=await setup();
+ await login.login(); const child=processes[0];
+ child.stdin._write=(chunk:any,_encoding:any,done:any)=>{const m=JSON.parse(chunk.toString());requests.push(m);const data=m.params.cursor?[{model:'second',hidden:true,supportedReasoningEfforts:[{reasoningEffort:'high'}]}]:[{model:'first'},{model:'first'}];queueMicrotask(()=>child.send({id:m.id,result:{data,nextCursor:m.params.cursor?null:'next'}}));done();};
+ const result=await login.catalog();expect(result.data.map((m:any)=>m.model)).toEqual(['first','second']);expect(result.data[1].supportedReasoningEfforts[0].reasoningEffort).toBe('high');
+ expect(requests.filter(r=>r.method==='model/list').map(r=>r.params)).toEqual([{includeHidden:true,limit:100},{includeHidden:true,limit:100,cursor:'next'}]);
+});
+it('rejects repeated model pagination cursors instead of returning an incomplete success',async()=>{
+ const {login,processes}=await setup();await login.login();const child=processes[0];
+ child.stdin._write=(chunk:any,_encoding:any,done:any)=>{const m=JSON.parse(chunk.toString());queueMicrotask(()=>child.send({id:m.id,result:{data:[],nextCursor:'same'}}));done();};
+ await expect(login.catalog()).rejects.toThrow('分页异常');
+});

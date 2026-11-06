@@ -28,7 +28,7 @@ export class ManagedNetworks {
   private changing = new Set<string>();
   private closed = false;
   private direct = new Agent();
-  constructor(private data: string, private store: ConfigStore, private secrets: SecretStore, private network: Network, private canChange: () => boolean = () => true) {
+  constructor(private data: string, private store: ConfigStore, private secrets: SecretStore, private network: Network, private canChange: (profileId: string) => boolean = () => true) {
     this.core = new MihomoCore(data, (url, max, official) => this.download(url, max, official));
   }
   overview() {
@@ -62,7 +62,7 @@ export class ManagedNetworks {
       const config = input.source === 'subscription' ? (await this.download(url, 2_000_000)).toString('utf8') : input.config || oldSecret.config;
       if (typeof config !== 'string') throw new Error('请导入 Clash / Mihomo 配置内容。');
       const nodes = parseNodes(config);
-      if (!this.canChange()) throw new Error('正在处理模型请求、登录或模型获取，请完成后再更新网络配置。');
+      if (!this.canChange(id)) throw new Error('正在处理模型请求、登录或模型获取，请完成后再更新网络配置。');
       if (!this.secrets.set) throw new Error('当前模式没有可写凭据存储。');
       const secretRef = `network:${id}`;
       await this.secrets.set(secretRef, JSON.stringify({ config: stringify({ proxies: nodes }), ...(input.source === 'subscription' ? { url } : {}) }));
@@ -74,14 +74,14 @@ export class ManagedNetworks {
   }
   async refresh(id: string) { const p = this.store.get().networkProfiles.find(p => p.id === id); if (!p || p.source !== 'subscription') throw new Error('此配置不是订阅。'); return this.save({ id, name: p.name, source: p.source }); }
   async select(id: string, node: string) {
-    if (!this.canChange() || this.changing.has(id) || this.starting.has(id)) throw new Error('请在当前请求完成后切换节点。');
+    if (!this.canChange(id) || this.changing.has(id) || this.starting.has(id)) throw new Error('请在当前请求完成后切换节点。');
     const profile = this.store.get().networkProfiles.find(p => p.id === id); if (!profile?.nodes.includes(node)) throw new Error('节点不存在。');
     this.changing.add(id);
     try { await this.stop(id); await this.store.update(current => { const p = current.networkProfiles.find(p => p.id === id)!; p.selected = node; p.selectionMode = 'manual'; }); this.errors.delete(id); }
     finally { this.changing.delete(id); }
   }
   async automatic(id: string) {
-    if (!this.canChange() || this.changing.has(id) || this.starting.has(id)) throw new Error('请在当前请求完成后切换节点模式。');
+    if (!this.canChange(id) || this.changing.has(id) || this.starting.has(id)) throw new Error('请在当前请求完成后切换节点模式。');
     if (!this.store.get().networkProfiles.some(p => p.id === id)) throw new Error('订阅不存在。');
     this.changing.add(id);
     try { await this.stop(id); await this.store.update(current => { current.networkProfiles.find(p => p.id === id)!.selectionMode = 'auto'; }); this.errors.delete(id); }

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { DesktopUpdates, macInstaller, type ReleaseInfo, type UpdateEngine } from '../src/desktop/updates.js';
+import { DesktopUpdates, macInstaller, type ReleaseInfo, type UpdateEngine, type UpdateOptions } from '../src/desktop/updates.js';
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
@@ -15,10 +15,10 @@ class Engine extends EventEmitter implements UpdateEngine {
   checkForUpdates = vi.fn(async () => { this.emit('update-available', release); return {}; });
   downloadUpdate = vi.fn(async () => { this.emit('download-progress', { percent: 75, transferred: 75, total: 100 }); this.emit('update-downloaded'); });
 }
-async function fixture(platform: NodeJS.Platform = 'darwin', packaged = true) {
+async function fixture(platform: NodeJS.Platform = 'darwin', packaged = true, overrides: Partial<UpdateOptions> = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'mb-updates-')); cleanups.push(() => rm(directory, { recursive: true, force: true }));
   const engine = new Engine(); const fetch = vi.fn(async () => new Response(data)); const installMacUpdate = vi.fn(async () => {}); const installAndRestart = vi.fn(async () => {});
-  const updates = new DesktopUpdates({ version: '0.1.0-alpha.1', platform, arch: 'arm64', packaged, directory, engine, fetch, installMacUpdate, installAndRestart });
+  const updates = new DesktopUpdates({ version: '0.1.0-alpha.1', platform, arch: 'arm64', packaged, directory, engine, fetch, installMacUpdate, installAndRestart, ...overrides });
   cleanups.push(async () => updates.close()); return { updates, engine, directory, fetch, installMacUpdate, installAndRestart };
 }
 
@@ -87,4 +87,32 @@ it('does not offer a same-version or older release for download', async () => {
 it('keeps a recovery notice visible until the user checks again',async()=>{
  const f=await fixture();f.updates.reportRecovery('已恢复原版本');expect(f.updates.snapshot()).toMatchObject({phase:'error',recovered:true,retry:'check'});
  await f.updates.check();expect(f.updates.snapshot()).toMatchObject({phase:'available',recovered:false});
+});
+
+it('one click checks, downloads, verifies and installs only once', async () => {
+  const f = await fixture();
+  await Promise.all([f.updates.checkAndInstall(), f.updates.checkAndInstall()]);
+  expect(f.engine.checkForUpdates).toHaveBeenCalledTimes(1); expect(f.fetch).toHaveBeenCalledTimes(1); expect(f.installMacUpdate).toHaveBeenCalledTimes(1);
+});
+it('one click does not download when already current', async () => {
+  const f = await fixture(); f.engine.checkForUpdates.mockImplementation(async () => { f.engine.emit('update-not-available'); return {}; });
+  await f.updates.checkAndInstall(); expect(f.fetch).not.toHaveBeenCalled(); expect(f.installMacUpdate).not.toHaveBeenCalled();
+});
+it('retries a failed proxy through direct networking without bypassing installer verification', async () => {
+  const prepareNetwork = vi.fn(async () => 'proxy' as const); const directNetwork = vi.fn(async () => {});
+  const f = await fixture('darwin', true, { prepareNetwork, directNetwork });
+  f.engine.checkForUpdates.mockRejectedValueOnce(new Error('proxy unavailable'));
+  await f.updates.check(); expect(directNetwork).toHaveBeenCalledTimes(1); expect(f.engine.checkForUpdates).toHaveBeenCalledTimes(2);
+  f.fetch.mockRejectedValueOnce(new Error('proxy unavailable')); await f.updates.download();
+  expect(directNetwork).toHaveBeenCalledTimes(2); expect(f.updates.snapshot().phase).toBe('downloaded');
+});
+it('does not retry a direct failure or install an unverified download', async () => {
+  const directNetwork = vi.fn(async () => {}); const f = await fixture('darwin', true, { prepareNetwork: async () => 'direct', directNetwork });
+  await f.updates.check(); f.fetch.mockResolvedValue(new Response('invalid installer')); await f.updates.checkAndInstall();
+  expect(directNetwork).not.toHaveBeenCalled(); expect(f.installMacUpdate).not.toHaveBeenCalled(); expect(f.updates.snapshot().phase).toBe('error');
+});
+it('one click waits for active model requests before installation', async () => {
+  let idle = false; const f = await fixture('darwin', true, { readyToInstall: () => idle });
+  const task = f.updates.checkAndInstall(); await vi.waitFor(() => expect(f.updates.snapshot().phase).toBe('installing'));
+  expect(f.installMacUpdate).not.toHaveBeenCalled(); idle = true; await task; expect(f.installMacUpdate).toHaveBeenCalledTimes(1);
 });

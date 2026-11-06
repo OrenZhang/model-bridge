@@ -1,7 +1,8 @@
 import { managedModels, models } from '../core/catalog.js';
-import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage, net, powerSaveBlocker } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage, powerSaveBlocker, type MenuItemConstructorOptions } from 'electron';
 import electronUpdater from 'electron-updater';
 import { DesktopUpdates, RELEASES_URL } from './updates.js';
+import { updateProxyRules } from './update-network.js';
 import { macApplication, macUpdateAttempt, macUpdateRollbackNotice, prepareMacUpdate } from './mac-updater.js';
 import path from 'node:path';
 import os from 'node:os';
@@ -23,10 +24,13 @@ let updateTimer: ReturnType<typeof setInterval> | undefined;
 let updateAttempt: Awaited<ReturnType<typeof macUpdateAttempt>>;
 let desktopReady = false;
 let awakeBlocker: number | undefined;
+function showWindow() { if (process.platform === 'darwin') void app.dock?.show(); else window?.setSkipTaskbar(false); window?.show(); window?.focus(); }
+function hideWindow() { window?.hide(); if (process.platform === 'darwin') app.dock?.hide(); else window?.setSkipTaskbar(true); }
+
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', (_event, args) => {
-    window?.show(); window?.focus();
+    showWindow();
     // A user may open the newly swapped app just before the helper launches it.
     // Accept the helper's authenticated startup context on the existing instance.
     if (process.platform === 'darwin' && app.isPackaged && args.includes('--model-bridge-update')) void app.whenReady().then(async () => {
@@ -35,7 +39,7 @@ else {
       if (attempt) { updateAttempt = attempt; if (desktopReady) await attempt.ready(); }
     }).catch(() => {});
   });
-  app.on('activate', () => window?.show());
+  app.on('activate', showWindow);
   app.on('will-quit', () => { if (awakeBlocker !== undefined) { powerSaveBlocker.stop(awakeBlocker); awakeBlocker = undefined; } });
   app.on('before-quit', event => { if (quitting) return; event.preventDefault(); quitting = true; updates?.close(); clearInterval(updateTimer); void runtime?.close().finally(() => app.quit()); if (!runtime) app.quit(); });
   void app.whenReady().then(async () => {
@@ -64,7 +68,15 @@ else {
     const { autoUpdater } = electronUpdater;
     updates = new DesktopUpdates({ version: app.getVersion(), packaged: app.isPackaged, platform: process.platform, arch: process.arch,
       directory: path.join(data, 'updates'), engine: autoUpdater,
-      fetch: (url, init) => net.fetch(url, init),
+      fetch: (url, init) => autoUpdater.netSession.fetch(url, init),
+      prepareNetwork: async () => {
+        const rules = updateProxyRules(await session.defaultSession.resolveProxy(RELEASES_URL));
+        await autoUpdater.netSession.setProxy(rules ? { mode: 'fixed_servers', proxyRules: rules } : { mode: 'direct' });
+        await autoUpdater.netSession.closeAllConnections();
+        return rules ? 'proxy' : 'direct';
+      },
+      directNetwork: async () => { await autoUpdater.netSession.setProxy({ mode: 'direct' }); await autoUpdater.netSession.closeAllConnections(); },
+      readyToInstall: () => active.gateway.activeRequests() === 0,
       installMacUpdate: async (archive, version, sha512) => {
         if (active.gateway.activeRequests()) throw new Error('仍有模型请求进行中，请等待完成后再安装更新。');
         const prepared = await prepareMacUpdate({ archive, sha512, version, currentVersion: app.getVersion(), currentApp: macApplication(process.execPath), applicationId: 'io.github.orenzhang.modelbridge', updatesDirectory: path.join(data, 'updates') });
@@ -89,6 +101,7 @@ else {
       try {
         switch (operation) {
           case 'update.check': await updates!.check(); return updates!.snapshot();
+          case 'update.check-install': await updates!.checkAndInstall(); return updates!.snapshot();
           case 'update.download': void updates!.download(); return updates!.snapshot();
           case 'update.install': await updates!.install(); return updates!.snapshot();
           case 'update.releases': await shell.openExternal(RELEASES_URL); return true;
@@ -222,7 +235,7 @@ else {
     window = new BrowserWindow({ width: 1180, height: 800, minWidth: 920, minHeight: 640, title: 'Model Bridge', icon: applicationIcon, backgroundColor: '#f6f5f1', webPreferences: { preload: path.join(directory, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
-    window.on('close', event => { if (!quitting) { event.preventDefault(); window?.hide(); } });
+    window.on('close', event => { if (!quitting) { event.preventDefault(); hideWindow(); } });
     await window.loadFile(path.join(directory, '../ui/index.html'));
     if (app.isPackaged) {
       if (!updateRecovery) void updates.check();
@@ -236,8 +249,11 @@ else {
     }
     const icon = nativeImage.createFromBitmap(pixels, { width: 16, height: 16 }); icon.setTemplateImage(true);
     tray = new Tray(icon);
-    tray.setToolTip('Model Bridge'); tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开 Model Bridge', click: () => window?.show() }, { label: active.gateway.address, enabled: false }, { type: 'separator' }, { label: '退出', click: () => app.quit() }]));
-    tray.on('click', () => window?.show());
+    tray.setToolTip('Model Bridge'); tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开 Model Bridge', click: showWindow }, { label: active.gateway.address, enabled: false }, { type: 'separator' }, { label: '退出', click: () => app.quit() }]));
+    tray.on('click', showWindow);
+    const menus: MenuItemConstructorOptions[] = [{ role: 'editMenu' }, { label: '窗口', submenu: [{ label: '显示窗口', click: showWindow }, { label: '隐藏到托盘', click: hideWindow }] }];
+    if (process.platform === 'darwin') menus.unshift({ label: 'Model Bridge', submenu: [{ role: 'about' }, { type: 'separator' }, { label: '隐藏到菜单栏', accelerator: 'Command+Q', click: hideWindow }] });
+    Menu.setApplicationMenu(Menu.buildFromTemplate(menus));
     desktopReady = true; await updateAttempt?.ready();
     console.info('Model Bridge desktop ready');
   } catch (error) {

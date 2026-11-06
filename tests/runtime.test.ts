@@ -48,3 +48,30 @@ it('keeps the previous API credential active when saving its replacement configu
   expect(runtime.store.get().connections[0]!.secretRef).toBe(old.secretRef);
   expect(values.get(old.secretRef!)).toBe('original-key');
 });
+
+async function credentialFixture() {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'mb-key-discovery-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  await atomicWrite(path.join(directory, 'config.json'), JSON.stringify({port:0,defaultProxy:{mode:'direct'}}));
+  let requests=0; let rejected=false;
+  const upstream=createServer((req,res)=>{requests++;res.setHeader('content-type','application/json');if(rejected||req.headers.authorization!=='Bearer fixture-deepseek-key'){res.writeHead(401);res.end('{}');}else res.end(JSON.stringify({data:[{id:'deepseek-test'}]}));});
+  await new Promise<void>(resolve=>upstream.listen(0,'127.0.0.1',resolve));cleanup.push(()=>new Promise<void>(resolve=>{upstream.closeAllConnections();upstream.close(()=>resolve())}));
+  const values=new Map<string,string>(); const runtime=await createRuntime(directory,{get:async ref=>values.get(ref),set:async(ref,value)=>{values.set(ref,value)}},directory);cleanup.push(()=>runtime.close());
+  const raw={id:'deepseek',name:'DeepSeek',provider:'deepseek',auth:'api-key',baseUrl:`http://127.0.0.1:${(upstream.address() as any).port}/v1`};
+  return {runtime,raw,values,requests:()=>requests,reject:()=>{rejected=true}};
+}
+it('preserves a saved DeepSeek key when editing a path on the same origin, and normalizes a pasted Bearer prefix',async()=>{
+  const f=await credentialFixture(); const saved=await f.runtime.saveConnection(f.raw,' Bearer fixture-deepseek-key ');
+  const edited=await f.runtime.saveConnection({...saved,baseUrl:saved.baseUrl.replace('/v1','')},'');
+  expect(edited.secretRef).toBe(saved.secretRef);expect(f.values.get(saved.secretRef!)).toBe('fixture-deepseek-key');
+  expect((await f.runtime.discover(saved.id))[0]!.upstreamId).toBe('deepseek-test');
+  await expect(f.runtime.saveConnection({...edited,baseUrl:'https://other.invalid/v1'})).rejects.toThrow('重新填写');
+  expect(f.runtime.store.get().connections[0]!.baseUrl).toBe(edited.baseUrl);
+});
+it('rejects saving API authentication without a key instead of silently discovering anonymously',async()=>{
+  const f=await credentialFixture();await expect(f.runtime.saveConnection(f.raw,' ')).rejects.toThrow('请填写 API Key');expect(f.requests()).toBe(0);
+});
+it('distinguishes official authentication rejection from a missing stored key without suggesting model IDs',async()=>{
+  const f=await credentialFixture();const saved=await f.runtime.saveConnection(f.raw,'fixture-deepseek-key');f.reject();
+  await expect(f.runtime.discover(saved.id)).rejects.toThrow('DeepSeek拒绝了此连接的 API Key（HTTP 401）');
+  const count=f.requests();f.values.delete(saved.secretRef!);await expect(f.runtime.discover(saved.id)).rejects.toThrow('未保存或无法读取');expect(f.requests()).toBe(count);
+});

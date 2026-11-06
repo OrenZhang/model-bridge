@@ -10,6 +10,8 @@ vi.mock('../src/auth/device-login.js',()=>({DeviceLogin:class extends EventEmitt
   constructor(readonly home:string,private connection:any){super();helpers.set(connection.id,this);}
   async login(){this.state={phase:'waiting',method:this.connection.loginMethod};return this.state;}
   async cancel(){this.state={phase:'cancelled'};}
+  async credentials(){return {token:'fixture-token',accountId:'fixture-account'}}
+  async catalog(){return {data:[{model:'gpt-6.1-sol',displayName:'GPT-6.1 Sol',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],inputModalities:['text','image']},{model:'gpt-6-astra',displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'medium'}]},{model:'internal-review',hidden:true}]}}
   close(){}
 }}));
 import { createRuntime } from '../src/core/runtime.js';
@@ -26,4 +28,11 @@ it('serializes only browser callback logins while preserving independent account
   expect((await runtime.startLogin('b')).phase).toBe('waiting');
   expect(helpers.get('a').home).not.toBe(helpers.get('b').home);
   expect(helpers.get('device').state.phase).toBe('waiting');
+});
+
+it('discovers the current public GPT catalog, excludes internal hidden entries and refreshes reasoning capabilities',async()=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'mb-gpt-catalog-'));cleanup.push(()=>rm(dir,{recursive:true,force:true}));
+ await atomicWrite(path.join(dir,'config.json'),JSON.stringify({port:0,connections:[{id:'gpt',name:'GPT',provider:'openai',auth:'chatgpt-device',baseUrl:'https://chatgpt.com/backend-api/codex',models:[{id:'old',name:'Existing',upstreamId:'gpt-6.1-sol',protocols:['responses'],reasoning:['low'],enabled:false}]}]}));
+ const runtime=await createRuntime(dir,{get:async()=>undefined},dir);cleanup.push(()=>runtime.close());
+ const models=await runtime.discover('gpt');expect(models.map((m:any)=>m.upstreamId)).toEqual(['gpt-6.1-sol','gpt-6-astra']);expect(models[0]).toMatchObject({enabled:false,reasoning:['high'],images:true});
 });

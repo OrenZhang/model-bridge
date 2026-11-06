@@ -202,3 +202,4 @@ main{margin-left:135px;padding:20px 16px}
 .network-check{display:flex;align-items:center;gap:8px;margin:10px 0;font-size:12px}.network-check small{display:block;color:var(--muted);margin-top:4px}.network-check .status-dot{flex-shrink:0}
 
 .network-check .status-dot.success{color:#2f875b}.network-check .status-dot.error{color:var(--danger)}
+input[name="apiKey"][data-saved="true"]::placeholder{color:var(--ink);opacity:1}

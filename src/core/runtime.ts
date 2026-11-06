@@ -1,3 +1,4 @@
+import { networkBinding } from './network-binding.js';
 import { PoolRouter } from '../gateway/pool-router.js';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
@@ -55,7 +56,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   const subscriptions = new Map<string, { signature: string; login: ProviderLogin }>();
   const connectionChecks = new Map<string, {phase:'ready'|'error';message?:string}>();
   function subscription(connection: Connection) {
-    const signature = JSON.stringify([connection.auth, connection.provider, connection.region, connection.baseUrl, connection.proxy, store.get().defaultProxy, store.get().proxies, store.get().networkProfiles]);
+    const signature = JSON.stringify([connection.auth, connection.provider, connection.region, connection.baseUrl, networkBinding(store.get(), connection)]);
     const previous = subscriptions.get(connection.id);
     if (previous && previous.signature !== signature) { previous.login.close(); subscriptions.delete(connection.id); }
     if (!subscriptions.has(connection.id)) {
@@ -81,7 +82,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   const identityUpdates = new Set<Promise<unknown>>();
   let closed = false;
   function login(connection: Connection) {
-    const signature = JSON.stringify({ auth: connection.auth, loginMethod: connection.loginMethod, proxy: connection.proxy, defaultProxy: store.get().defaultProxy, proxies: store.get().proxies, networks: store.get().networkProfiles });
+    const signature = JSON.stringify({ auth: connection.auth, loginMethod: connection.loginMethod, network: networkBinding(store.get(), connection) });
     const previous = logins.get(connection.id);
     if (previous && previous.signature !== signature) { previous.login.close(); logins.delete(connection.id); }
     if (!logins.has(connection.id)) {
@@ -116,7 +117,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     connectionChecks.set(connection.id,result.ok?{phase:'ready'}:{phase:'error',message:`最近调用失败${result.status ? '（HTTP '+result.status+'）' : ''}，请检查账号授权、模型权限和网络。`});
   }, onUsageError: () => { usageWriteFailed = true; } };
   let gateway = await startGateway(gatewayOptions);
-  managed = new ManagedNetworks(directory, store, secrets, network, () => gateway.activeRequests() === 0 && discoveryTasks.size === 0 && ![...logins.values(), ...subscriptions.values()].some(value => ['starting', 'waiting'].includes(value.login.state.phase)));
+  managed = new ManagedNetworks(directory, store, secrets, network, profileId => { const ids = store.get().connections.filter(c => { const choice = networkBinding(store.get(), c).choice; return choice.mode === 'managed' && choice.profileId === profileId; }).map(c => c.id); return gateway.activeRequests(ids) === 0 && !ids.some(id => discoveryTasks.has(id) || ['starting', 'waiting'].includes((logins.get(id) ?? subscriptions.get(id))?.login.state.phase ?? '')); });
   async function ensureClient(id: 'codex' | 'claude' | 'generic') {
     const ref = `client:${id}`; let token = await secrets.get(ref);
     if (!token) {
@@ -148,9 +149,12 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   }
   async function saveConnection(raw: unknown, apiKey?: string, autoDiscover = false) {
     const connection = ConnectionSchema.parse(raw);
+    apiKey = apiKey?.trim();
+    if (connection.provider === 'deepseek' && apiKey) apiKey = apiKey.replace(/^Bearer\s+/i, '').trim();
     const previous = store.get().connections.find(c => c.id === connection.id);
-    const authChanged = !!previous && [previous.auth, previous.provider, previous.region, previous.baseUrl].join('\0') !== [connection.auth, connection.provider, connection.region, connection.baseUrl].join('\0');
+    const authChanged = !!previous && [previous.auth, previous.provider, previous.region, previous.auth === 'api-key' ? new URL(previous.baseUrl).origin : previous.baseUrl].join('\0') !== [connection.auth, connection.provider, connection.region, connection.auth === 'api-key' ? new URL(connection.baseUrl).origin : connection.baseUrl].join('\0');
     if (authChanged) { delete connection.accountId; delete connection.accountEmail; delete connection.credentialVersion; delete connection.secretRef; }
+    if (connection.auth === 'api-key' && !apiKey && !(connection.secretRef || (!authChanged && previous?.secretRef))) throw new Error(authChanged ? '服务地址或认证方式已改变，请重新填写 API Key。' : '请填写 API Key，密钥不会自动使用其他连接的账号。');
     if (!['chatgpt-device', 'subscription'].includes(connection.auth)) { delete connection.accountId; delete connection.accountEmail; }
     if (apiKey && connection.auth !== 'api-key') throw new Error('API Key 只能用于 API Key 类型的连接。');
     if (apiKey) { if (!secrets.set) throw new Error('Credentials are read-only.'); connection.credentialVersion = randomBytes(12).toString('hex'); connection.secretRef = `connection:${connection.id}:${connection.credentialVersion}`; await secrets.set(connection.secretRef, apiKey); keyVersions.set(connection.id, (keyVersions.get(connection.id) ?? 0) + 1); }
@@ -174,13 +178,14 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     if (connection.auth === 'chatgpt-device') {
       await login(connection).credentials();
       const result = await login(connection).catalog();
-      found = (result.data ?? []).map((m: any) => ({ id: m.model, name: m.displayName ?? m.model, reasoning: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort), images: (m.inputModalities ?? []).includes('image') }));
+      found = (result.data ?? []).filter((m: any) => !m.hidden).map((m: any) => ({ id: m.model, name: m.displayName ?? m.model, reasoning: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort), images: (m.inputModalities ?? ['text', 'image']).includes('image') }));
     } else if (connection.auth === 'subscription' && connection.provider === 'minimax') {
       await subscription(connection).credentials();
       found = minimaxPresetModels(connection) ?? [];
       discoveries.set(id, { phase: 'loading', source: 'preset', message: '使用 MiniMax 官方预置目录；实际权限以套餐为准。' });
     } else {
       const key = connection.auth === 'subscription' ? (await subscription(connection).credentials()).token : connection.secretRef ? await secrets.get(connection.secretRef) : undefined;
+      if (connection.auth === 'api-key' && !key) throw new Error('此连接的 API Key 未保存或无法读取，请重新填写后再同步。');
       const headers: Record<string, string> = { accept: 'application/json' };
       if (key) { headers.authorization = `Bearer ${key}`; if (connection.auth !== 'subscription') headers['x-api-key'] = key; headers['anthropic-version'] = '2023-06-01'; }
       Object.assign(headers,coSailHeaders(store.get().deviceId!,connection.provider==='kimi'));
@@ -188,7 +193,11 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
       if (!response.ok) {
         await response.body?.cancel();
         const preset = [404, 405].includes(response.status) ? minimaxPresetModels(connection) : undefined;
-        if (!preset) throw new Error(`Model discovery returned HTTP ${response.status}. Add model IDs manually if this service has no model-list endpoint.`);
+        if (!preset) {
+          if (response.status === 401 && connection.auth === 'subscription') throw new Error('此订阅账号的授权已失效（HTTP 401），请重新登录后再同步模型。');
+          if (response.status === 401) throw new Error(`${connection.provider === 'deepseek' ? 'DeepSeek' : '服务商'}拒绝了此连接的 API Key（HTTP 401）。请检查密钥是否来自当前服务地址、是否有效；手动添加模型不能解决鉴权失败。`);
+          throw new Error(`获取模型失败（HTTP ${response.status}），请检查服务地址、账号权限和网络。`);
+        }
         found = preset;
         discoveries.set(id, { phase: 'loading', source: 'preset', message: '服务商未提供模型列表，使用官方预置目录；实际权限以套餐为准。' });
       } else {
@@ -211,6 +220,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
           const refreshed = ModelSchema.parse(m);
           Object.assign(previous, { protocols: refreshed.protocols, thinking: refreshed.thinking, reasoning: refreshed.reasoning, contextWindow: refreshed.contextWindow, tools: refreshed.tools, images: refreshed.images });
         }
+        if (previous && connection.auth === 'chatgpt-device') Object.assign(previous, {reasoning: ModelSchema.shape.reasoning.parse(m.reasoning ?? []), images: m.images ?? previous.images});
         if (previous && connection.auth === 'subscription' && connection.provider === 'minimax' && m.reasoning) previous.reasoning = ModelSchema.shape.reasoning.parse(m.reasoning);
         if (!previous) existing.set(m.id, ModelSchema.parse({ id: m.id, name: m.name, upstreamId: m.id, protocols: m.protocols ?? defaultProtocols, ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}), ...(typeof m.tools === 'boolean' ? { tools: m.tools } : {}), ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...(m.thinking ? {thinking:m.thinking} : {}), images: m.images ?? false }));
       }

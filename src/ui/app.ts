@@ -32,7 +32,7 @@ function updatePanel() {
   versionButton.textContent = `v${update.currentVersion}${['available', 'downloaded'].includes(update.phase) ? ' · 有更新' : ''}`;
   const canDownload = update.phase === 'available' || (update.phase === 'error' && update.retry === 'download');
   const canInstall = update.phase === 'downloaded' || (update.phase === 'error' && update.retry === 'install');
-  const markup = `<p class="update-version">当前版本 <code>${escape(update.currentVersion)}</code>${update.latestVersion ? ` <span>→</span> <code>${escape(update.latestVersion)}</code>` : ''}</p><p role="status">${labels[update.phase]}</p>${update.phase === 'downloading' ? `<progress class="update-progress" max="100" value="${Math.min(100, Math.max(0, update.percent ?? 0))}" aria-label="更新下载进度"></progress><p class="hint">${Math.round(update.percent ?? 0)}%${update.total ? ` · ${(Number(update.transferred ?? 0) / 1048576).toFixed(1)} / ${(update.total / 1048576).toFixed(1)} MB` : ''}</p>` : ''}${update.message ? `<p class="${update.phase === 'error' ? 'notice' : 'hint'}">${escape(update.message)}</p>` : ''}${update.notes ? `<details class="update-notes"><summary>更新说明</summary><pre>${escape(update.notes)}</pre></details>` : ''}<p class="hint">安装时退出并自动重启应用。请等待模型请求完成后再安装，账号与配置保留。</p><div class="dialog-actions"><button class="plain" data-action="update-releases">查看 Releases</button><button class="secondary" data-action="update-check" ${busy || update.phase === 'development' ? 'disabled' : ''}>${update.phase === 'error' && update.retry === 'check' ? '重新检查' : '检查更新'}</button>${canDownload ? '<button class="primary" data-action="update-download">下载更新</button>' : ''}${canInstall ? `<button class="primary" data-action="update-install">安装并重启</button>` : ''}</div>`;
+  const markup = `<p class="update-version">当前版本 <code>${escape(update.currentVersion)}</code>${update.latestVersion ? ` <span>→</span> <code>${escape(update.latestVersion)}</code>` : ''}</p><p role="status">${labels[update.phase]}</p>${update.phase === 'downloading' ? `<progress class="update-progress" max="100" value="${Math.min(100, Math.max(0, update.percent ?? 0))}" aria-label="更新下载进度"></progress><p class="hint">${Math.round(update.percent ?? 0)}%${update.total ? ` · ${(Number(update.transferred ?? 0) / 1048576).toFixed(1)} / ${(update.total / 1048576).toFixed(1)} MB` : ''}</p>` : ''}${update.message ? `<p class="${update.phase === 'error' ? 'notice' : 'hint'}">${escape(update.message)}</p>` : ''}${update.networkLabel ? `<p class="hint">更新网络：${escape(update.networkLabel)}</p>` : ''}${update.notes ? `<details class="update-notes"><summary>更新说明</summary><pre>${escape(update.notes)}</pre></details>` : ''}<p class="hint">点击“检查并更新”后，有新版本会自动下载、校验并重启；进行中的模型请求完成后再安装。</p><div class="dialog-actions"><button class="plain" data-action="update-releases">查看 Releases</button><button class="secondary" data-action="update-check" ${busy || update.phase === 'development' ? 'disabled' : ''}>${update.phase === 'error' && update.retry === 'check' ? '重新检查并更新' : '检查并更新'}</button>${canDownload ? '<button class="primary" data-action="update-download">下载更新</button>' : ''}${canInstall ? `<button class="primary" data-action="update-install">安装并重启</button>` : ''}</div>`;
   const content = $('#update-content');
   const identity = JSON.stringify([update.latestVersion ?? update.currentVersion, update.notes ?? '']);
   if (markup === updateMarkup && content.hasChildNodes()) return;
@@ -255,6 +255,10 @@ function openConnection(id?: string, provider?: string) {
   editing = id ? state.config.connections.find((c: any) => c.id === id) : undefined;
   const form = $<HTMLFormElement>('#connection-form'); form.reset(); reuseSnapshot = '';
   const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
+  const savedKey = editing?.auth === 'api-key' && !!editing.secretRef;
+  field('apiKey').placeholder = savedKey ? '••••••••（已保存，留空保留）' : '密钥加密保存在本机';
+  field('apiKey').title = savedKey ? '已保存 API Key。填写新值才会替换，留空保留原密钥。' : '';
+  field('apiKey').dataset.saved = String(savedKey);
   field('proxy').innerHTML = proxyOptions();
   $('#connection-dialog h2').textContent = editing ? '连接设置' : '添加连接';
   if (editing) {
@@ -300,7 +304,7 @@ document.addEventListener('click', event => {
     try {
       if (operation === 'open-updates') { updatePanel(); $<HTMLDialogElement>('#update-dialog').showModal(); }
       if (operation === 'update-releases') await call('update.releases');
-      if (['update-check', 'update-download', 'update-install'].includes(operation ?? '')) { state.update = await call(operation!.replace('update-', 'update.')); updatePanel(); }
+      if (['update-check', 'update-download', 'update-install'].includes(operation ?? '')) { state.update = await call(operation === 'update-check' ? 'update.check-install' : operation!.replace('update-', 'update.')); updatePanel(); }
       if (operation === 'add-connection') openConnection(undefined, target.dataset.provider);
       if (operation === 'edit') openConnection(id);
       if (operation === 'pool-details') showPool(id!);

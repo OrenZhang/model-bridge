@@ -59,7 +59,10 @@ jobs:
         run: node scripts/validate-ai-proxy.mjs
       - name: Verify macOS idle sleep prevention
         if: runner.os == 'macOS'
-        run: npx electron scripts/validate-power-save.cjs
+        run: |
+          npx electron scripts/validate-power-save.cjs
+          npx electron scripts/validate-update-network.cjs
+          npx electron scripts/validate-tray.cjs
       - name: Verify Codex integration
         run: node scripts/validate-codex-providers.mjs --mock-pools
       - name: Build installers and update metadata
@@ -75,6 +78,8 @@ jobs:
             printf "ci-fixture-password" | gnome-keyring-daemon --unlock --components=secrets
             xvfb-run -a node scripts/validate-linux-desktop.mjs
           '
+      - name: Verify trimmed packaged Codex
+        run: node scripts/validate-package.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}-${{ matrix.arch }}

@@ -1,6 +1,6 @@
 {
   "name": "model-bridge",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "private": true,
   "description": "One local model gateway for Codex, Claude Code and other agents.",
   "type": "module",
@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@napi-rs/keyring": "^2.1.2",
-    "@openai/codex": "0.144.1",
+    "@openai/codex": "0.167.0",
     "electron-updater": "^6.8.11",
     "fflate": "^0.8.2",
     "semver": "^7.8.6",
@@ -55,7 +55,11 @@
     "files": [
       "dist/**/*",
       "assets/**/*",
-      "package.json"
+      "package.json",
+      "!dist/**/*.map",
+      "!node_modules/@openai/**/vendor/**/bin/codex-code-mode-host*",
+      "!node_modules/@openai/**/vendor/**/codex-path/**",
+      "!node_modules/@openai/**/vendor/**/codex-resources/**"
     ],
     "mac": {
       "icon": "assets/icon.icns",
@@ -94,7 +98,12 @@
       "repo": "model-bridge",
       "releaseType": "prerelease"
     },
-    "generateUpdatesFilesForAllChannels": true
+    "generateUpdatesFilesForAllChannels": true,
+    "electronLanguages": [
+      "en-US",
+      "zh-CN",
+      "zh-TW"
+    ]
   },
   "homepage": "https://github.com/OrenZhang/model-bridge",
   "author": {

@@ -9,7 +9,7 @@ export type Probe = (proxy: string, target: ProbeTarget, signal: AbortSignal) =>
 export function aiProbeTarget(connection: Connection): ProbeTarget {
   const base = connection.baseUrl.replace(/\/+$/, '');
   const url = connection.auth === 'chatgpt-device'
-    ? 'https://chatgpt.com/backend-api/codex/models?client_version=0.144.1'
+    ? 'https://chatgpt.com/backend-api/codex/models?client_version=0.167.0'
     : connection.provider === 'minimax' ? `${base}/${connection.auth === 'subscription' || base.includes('/anthropic/') || connection.models.some(m => m.protocols.includes('messages')) ? 'messages' : 'chat/completions'}` : `${base}/models`;
   const method = connection.provider === 'minimax' ? 'POST' : 'GET';
   return { key: `${connection.provider}:${method}:${url}`, label: `${connection.provider} · ${new URL(base).host}`, url, method, provider: connection.provider };
