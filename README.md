@@ -12,21 +12,21 @@
 
 ## 下载安装
 
-当前为 **`0.1.0-alpha.6`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
+当前为 **`0.1.0-alpha.7`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
 
 | 系统 | 架构 | 安装包 |
 | --- | --- | --- |
-| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.6/Model-Bridge-0.1.0-alpha.6-mac-arm64.dmg) |
-| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.6/Model-Bridge-0.1.0-alpha.6-mac-x64.dmg) |
-| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.6/Model-Bridge-0.1.0-alpha.6-win-x64.exe) |
-| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.6/Model-Bridge-0.1.0-alpha.6-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.6/Model-Bridge-0.1.0-alpha.6-linux-amd64.deb) |
-| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.6/Model-Bridge-0.1.0-alpha.6-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.6/Model-Bridge-0.1.0-alpha.6-linux-arm64.deb) |
+| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.7/Model-Bridge-0.1.0-alpha.7-mac-arm64.dmg) |
+| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.7/Model-Bridge-0.1.0-alpha.7-mac-x64.dmg) |
+| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.7/Model-Bridge-0.1.0-alpha.7-win-x64.exe) |
+| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.7/Model-Bridge-0.1.0-alpha.7-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.7/Model-Bridge-0.1.0-alpha.7-linux-amd64.deb) |
+| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.7/Model-Bridge-0.1.0-alpha.7-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.7/Model-Bridge-0.1.0-alpha.7-linux-arm64.deb) |
 
 安装包已附带对应平台的官方 mihomo 内核，首次使用自动校验并安装，无需另行下载；保留下载和离线导入入口。
 
 macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未签名、公证；是否允许运行由系统安全设置决定。Linux 桌面需可用的系统凭据库，安装说明见 [Linux 文档](docs/linux.md)。
 
-**更新**：点击左下角版本号，在更新窗口点击“检查并更新”。有新版本时自动下载、校验、安装并重启；进行中的模型请求完成后再安装。后台定时检查只提示，不自动安装。更新检查和下载优先使用检测到的系统 / PAC 代理，失败后直连重试一次，窗口显示当前网络方式。macOS 保留启动失败自动回退。详见 [发布与更新](docs/updates.md)。
+**更新**：点击左下角版本号，在更新窗口点击“检查并更新”。有新版本时自动下载、校验、安装并重启；进行中的模型请求完成后再安装。后台定时检查只提示，不自动安装。更新检查和下载会检测系统 / PAC、环境、应用内独立代理和订阅节点，优先使用通过 GitHub 检测的代理，失败后直连重试一次；窗口显示实际代理或节点名称。macOS 保留启动失败自动回退。详见 [发布与更新](docs/updates.md)。
 
 ## 开始使用
 

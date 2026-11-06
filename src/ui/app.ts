@@ -52,7 +52,18 @@ function updatePanel() {
   updateMarkup = markup;
   updateNotesIdentity = identity;
 }
-function toast(message: string, error = false) { const element = $('#toast'); element.textContent = message.replace(/^Error invoking remote method '[^']+': Error: /, ''); element.classList.toggle('error', error); element.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => element.hidden = true, error ? 9000 : 4500); }
+function toast(message: string, error = false) {
+  const element = $('#toast');
+  element.textContent = message.replace(/^Error invoking remote method '[^']+': Error: /, '');
+  element.classList.toggle('error', error);
+  element.hidden = false;
+  // Native modal dialogs live above every document z-index. A manual popover
+  // places feedback above the modal without moving focus out of its form.
+  if (element.matches(':popover-open')) element.hidePopover();
+  element.showPopover();
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { element.hidePopover(); element.hidden = true; }, error ? 9000 : 4500);
+}
 async function action(operation: string, payload?: unknown, message?: string) { try { const result = await call(operation, payload); if (message) toast(message); await refresh(); return result; } catch (e: any) { toast(e.message ?? String(e), true); throw e; } }
 const activeModels = () => state.config.connections.filter((c: any) => c.enabled).flatMap((connection: any) => connection.models.filter((m: any) => m.enabled).map((model: any) => ({ connection, model })));
 const proxyName = (choice: any) => choice.mode === 'inherit' ? '默认网络' : choice.mode === 'direct' ? '直连' : choice.mode === 'system' ? '系统网络' : (choice.mode === 'managed' ? state.config.networkProfiles ?? [] : state.config.proxies).find((p: any) => p.id === choice.profileId)?.name ?? '网络配置已移除';

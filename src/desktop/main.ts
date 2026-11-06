@@ -2,7 +2,8 @@ import { managedModels, models } from '../core/catalog.js';
 import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage, powerSaveBlocker, type MenuItemConstructorOptions } from 'electron';
 import electronUpdater from 'electron-updater';
 import { DesktopUpdates, RELEASES_URL } from './updates.js';
-import { updateProxyRules } from './update-network.js';
+import { updateProxyRules, chooseUpdateProxy, environmentUpdateProxies, type UpdateProxy } from './update-network.js';
+import { UpdateTransport } from './update-transport.js';
 import { macApplication, macUpdateAttempt, macUpdateRollbackNotice, prepareMacUpdate } from './mac-updater.js';
 import path from 'node:path';
 import os from 'node:os';
@@ -15,6 +16,7 @@ import { resolveClientAddress } from '../clients/configure.js';
 import { atomicWrite } from '../core/store.js';
 import { strToU8, zipSync } from 'fflate';
 import { z } from 'zod';
+import { ConnectionSchema } from '../core/config.js';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 app.setName('Model Bridge');
@@ -66,16 +68,47 @@ else {
     for (const client of ['codex', 'claude', 'generic'] as const) await runtime.ensureClient(client);
     const active = runtime;
     const { autoUpdater } = electronUpdater;
+    const updateTransport = new UpdateTransport(autoUpdater.netSession);
+    autoUpdater.on('login', updateTransport.login);
+    let probeSequence = 0;
     updates = new DesktopUpdates({ version: app.getVersion(), packaged: app.isPackaged, platform: process.platform, arch: process.arch,
       directory: path.join(data, 'updates'), engine: autoUpdater,
-      fetch: (url, init) => autoUpdater.netSession.fetch(url, init),
-      prepareNetwork: async () => {
-        const rules = updateProxyRules(await session.defaultSession.resolveProxy(RELEASES_URL));
-        await autoUpdater.netSession.setProxy(rules ? { mode: 'fixed_servers', proxyRules: rules } : { mode: 'direct' });
-        await autoUpdater.netSession.closeAllConnections();
-        return rules ? 'proxy' : 'direct';
+      fetch: updateTransport.fetch,
+      prepareNetwork: async target => {
+        const candidates: UpdateProxy[] = [];
+        try { const url = updateProxyRules(await session.defaultSession.resolveProxy(target)); if (url) candidates.push({ url, label: '系统代理' }); } catch { /* Other configured proxies remain available. */ }
+        candidates.push(...environmentUpdateProxies(process.env));
+        const config = active.store.get();
+        for (const profile of config.proxies) {
+          try {
+            const connection = ConnectionSchema.parse({ id: 'update-probe', name: 'Update probe', provider: 'custom', auth: 'none', baseUrl: 'https://github.com', proxy: { mode: 'proxy', profileId: profile.id } });
+            const url = await active.network.proxyUrl(connection, target);
+            if (url) candidates.push({ url, label: `独立代理：${profile.name}` });
+          } catch { /* A missing credential in one proxy must not block updating. */ }
+        }
+        const probe = async (candidate: UpdateProxy, parent: AbortSignal) => {
+          const transport = new UpdateTransport(session.fromPartition(`update-probe-${process.pid}-${++probeSequence}`, { cache: false }));
+          try {
+            await transport.apply(candidate);
+            const response = await transport.fetch(target, { headers: { range: 'bytes=0-16383' }, signal: AbortSignal.any([parent, AbortSignal.timeout(4500)]) });
+            const ok = [200, 206].includes(response.status);
+            if (ok && response.body) { const reader = response.body.getReader(); await reader.read(); await reader.cancel(); }
+            else await response.body?.cancel();
+            return ok;
+          } catch { return false; }
+          finally { await transport.session.closeAllConnections(); }
+        };
+        let selected = await chooseUpdateProxy(candidates, probe);
+        if (!selected) {
+          for (const profile of config.networkProfiles) {
+            try { selected = await chooseUpdateProxy(await active.managed.updateProxies(profile.id), probe); } catch { /* Try the next subscription. */ }
+            if (selected) break;
+          }
+        }
+        await updateTransport.apply(selected);
+        return { mode: selected ? 'proxy' : 'direct', label: selected?.label ?? '直连（未检测到可用代理）' };
       },
-      directNetwork: async () => { await autoUpdater.netSession.setProxy({ mode: 'direct' }); await autoUpdater.netSession.closeAllConnections(); },
+      directNetwork: () => updateTransport.apply(),
       readyToInstall: () => active.gateway.activeRequests() === 0,
       installMacUpdate: async (archive, version, sha512) => {
         if (active.gateway.activeRequests()) throw new Error('仍有模型请求进行中，请等待完成后再安装更新。');

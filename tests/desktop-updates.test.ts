@@ -116,3 +116,10 @@ it('one click waits for active model requests before installation', async () => 
   const task = f.updates.checkAndInstall(); await vi.waitFor(() => expect(f.updates.snapshot().phase).toBe('installing'));
   expect(f.installMacUpdate).not.toHaveBeenCalled(); idle = true; await task; expect(f.installMacUpdate).toHaveBeenCalledTimes(1);
 });
+it('probes the real installer target and displays the selected independent proxy name',async()=>{
+ const prepareNetwork=vi.fn(async()=>({mode:'proxy' as const,label:'订阅：测试 / Node A'}));
+ const f=await fixture('darwin',true,{prepareNetwork});await f.updates.check();await f.updates.download();
+ expect(prepareNetwork.mock.calls[0]).toEqual(['https://github.com/OrenZhang/model-bridge/releases.atom']);
+ expect(prepareNetwork.mock.calls[1]).toEqual(['https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-mac-arm64.zip']);
+ expect(f.updates.snapshot().networkLabel).toBe('订阅：测试 / Node A');
+});

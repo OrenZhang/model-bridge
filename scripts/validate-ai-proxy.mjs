@@ -64,6 +64,12 @@ try {
   assert.equal((await other.json()).node, 'SlowAvailable');
   assert.equal(managed.overview().profiles[0].checks.length, 2);
   console.log('PASS: separate AI service targets select different nodes in one subscription');
+  const beforeUpdateRoutes = managed.overview().profiles[0].checks.map(check => check.selected);
+  const updateRoutes = await managed.updateProxies(id);
+  assert.equal(updateRoutes.length, 3);
+  assert.deepEqual(managed.overview().profiles[0].checks.map(check => check.selected), beforeUpdateRoutes);
+  assert.equal(store.get().networkProfiles[0].selectionMode, 'auto');
+  console.log('PASS: GitHub update routes reuse subscription transport without changing AI selections');
   const stream = await network.request(connection, base + '/v1/stream');
   const reader = stream.body.getReader(); const first = await reader.read(); assert.match(Buffer.from(first.value).toString(), /FastAvailable/);
   const before = nodes[2].calls; nodes[2].broken = true;
@@ -77,6 +83,7 @@ try {
   active = true; await assert.rejects(managed.select(id, 'SlowAvailable'), /请求完成/); active = false;
   await managed.select(id, 'BlockedFast');
   assert.equal(store.get().networkProfiles[0].selectionMode, 'manual');
+  assert.equal((await managed.updateProxies(id)).length, 1);
   const manual = await network.request(connection, base + '/v1/chat/completions', { method: 'POST', body: '{}' });
   assert.equal(manual.status, 403); await manual.body.cancel();
   console.log('PASS: manual selection is retained and rejects mode changes during active requests');

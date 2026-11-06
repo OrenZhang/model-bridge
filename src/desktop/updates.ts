@@ -27,7 +27,7 @@ export interface UpdateOptions {
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
   installMacUpdate: (file: string, version: string, sha512: string) => Promise<void>; installAndRestart: () => Promise<void>;
   changed?: (state: UpdateState) => void;
-  prepareNetwork?: () => Promise<'proxy' | 'direct'>;
+  prepareNetwork?: (url: string) => Promise<'proxy' | 'direct' | { mode: 'proxy' | 'direct'; label: string }>;
   directNetwork?: () => Promise<void>;
   readyToInstall?: () => boolean;
 }
@@ -89,10 +89,13 @@ export class DesktopUpdates {
   }
   private async withNetwork<T>(operation: () => Promise<T>): Promise<T> {
     let mode: 'proxy' | 'direct' = 'direct';
-    try { mode = await this.options.prepareNetwork?.() ?? 'direct'; }
+    let label = '直连';
+    const file = this.info?.files.find(file => file.url.endsWith(this.options.platform === 'darwin' ? `mac-${this.options.arch}.zip` : this.options.platform === 'win32' ? '.exe' : '.AppImage'));
+    const target = this.state.phase === 'downloading' && file && !file.url.includes('/') ? `${RELEASES_URL}/download/v${this.info!.version}/${encodeURIComponent(file.url)}` : RELEASES_URL + '.atom';
+    try { const selection = await this.options.prepareNetwork?.(target) ?? 'direct'; mode = typeof selection === 'string' ? selection : selection.mode; label = typeof selection === 'string' ? mode === 'proxy' ? '系统代理' : '直连' : selection.label; }
     catch { await this.options.directNetwork?.(); }
     if (this.closed) throw new Error('更新已取消。');
-    this.set({ networkLabel: mode === 'proxy' ? '系统代理' : '直连' });
+    this.set({ networkLabel: label });
     try { return await operation(); }
     catch (error) {
       if (this.closed || mode !== 'proxy' || !this.options.directNetwork) throw error;

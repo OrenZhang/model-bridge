@@ -19,7 +19,7 @@ async function freePort() {
   const server = createServer(); await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const port = (server.address() as { port: number }).port; await new Promise<void>(resolve => server.close(() => resolve())); return port;
 }
-type Running = { child: ChildProcess; url: string; directory: string; updatedAt: string; selected: string; selectionMode: 'auto' | 'manual'; selection?: AiNodeSelection };
+type Running = { child: ChildProcess; url: string; nodeUrls: string[]; directory: string; updatedAt: string; selected: string; selectionMode: 'auto' | 'manual'; selection?: AiNodeSelection };
 export class ManagedNetworks {
   readonly core: MihomoCore;
   private running = new Map<string, Running>();
@@ -104,6 +104,13 @@ export class ManagedNetworks {
     const running = this.running.get(id)!;
     return running.selection && connection ? running.selection.choose(aiProbeTarget(connection)) : running.url;
   }
+  async updateProxies(id: string) {
+    await this.ensureRunning(id);
+    const running = this.running.get(id)!;
+    const profile = this.store.get().networkProfiles.find(p => p.id === id)!;
+    // GitHub probes use their own routes, without changing any AI target's node.
+    return running.selectionMode === 'manual' ? [{ url: running.url, label: `订阅：${profile.name} / ${profile.selected}` }] : running.nodeUrls.map((url, index) => ({ url, label: `订阅：${profile.name} / ${profile.nodes[index]}` }));
+  }
   failed(id: string, connection: Connection, proxy: string) { this.running.get(id)?.selection?.failed(aiProbeTarget(connection), proxy); }
   private async ensureRunning(id: string): Promise<string> {
     if (this.closed || this.changing.has(id)) throw new Error('内置网络正在停止或更新。');
@@ -128,7 +135,7 @@ export class ManagedNetworks {
     const runner = fileURLToPath(new URL('./runner.js', import.meta.url)).replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
     const child = fork(runner, [binary, directory, config], { env, execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true });
     const nodeUrl = (i: number) => `http://mb-${i}:${password}@127.0.0.1:${port}`;
-    const running: Running = { child, url: profile.selectionMode === 'auto' ? nodeUrl(0) : `http://mb:${password}@127.0.0.1:${port}`, directory, updatedAt: profile.updatedAt, selected: profile.selected, selectionMode: profile.selectionMode };
+    const running: Running = { child, url: profile.selectionMode === 'auto' ? nodeUrl(0) : `http://mb:${password}@127.0.0.1:${port}`, nodeUrls: nodes.map((_, index) => nodeUrl(index)), directory, updatedAt: profile.updatedAt, selected: profile.selected, selectionMode: profile.selectionMode };
     let exited = false; child.once('error', () => { exited = true; });
     child.once('exit', () => { exited = true; void running.selection?.close(); if (this.running.get(id) === running) { this.running.delete(id); this.errors.set(id, '内置网络进程已停止，请重试。'); } });
     try {

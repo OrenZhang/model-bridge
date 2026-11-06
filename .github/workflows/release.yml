@@ -61,8 +61,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           npx electron scripts/validate-power-save.cjs
-          npx electron scripts/validate-update-network.cjs
           npx electron scripts/validate-tray.cjs
+      - name: Verify authenticated update proxy session
+        if: runner.os != 'Linux'
+        run: npx electron scripts/validate-update-network.cjs
       - name: Verify Codex integration
         run: node scripts/validate-codex-providers.mjs --mock-pools
       - name: Build installers and update metadata
