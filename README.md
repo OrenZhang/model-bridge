@@ -19,7 +19,7 @@
 | macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-mac-arm64.dmg) |
 | macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-mac-x64.dmg) |
 | Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-win-x64.exe) |
-| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-x64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-amd64.deb) |
+| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-amd64.deb) |
 | Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-arm64.deb) |
 
 macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未签名、公证；是否允许运行由系统安全设置决定。Linux 桌面需可用的系统凭据库，安装说明见 [Linux 文档](docs/linux.md)。
@@ -110,6 +110,7 @@ npm run package
 | --- | --- |
 | [使用与兼容性](docs/guide.md) | 登录、分发、代理、配置与完整限制 |
 | [发布与更新](docs/updates.md) | 更新行为、安装方式、Release 流程 |
+| [更新验证](docs/validation-updates.md) | 发布产物、真实下载与校验结果 |
 | [订阅认证](docs/provider-auth.md) | Kimi / MiniMax 授权与套餐边界 |
 | [连接与服务控制](docs/connection-controls.md) | 推理模式、独立 Key、CoSail 设备标识 |
 | [验证记录](docs/validation.md) | 真实服务、Codex 与模拟测试的范围 |

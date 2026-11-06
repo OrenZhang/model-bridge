@@ -32,3 +32,5 @@ GitHub 构建默认可能只生成 `latest*.yml`。发布阶段按版本号补�
 发布写权限仅授予最后的 publish job，构建 job 只读。GitHub 凭据不会放入客户端。后续版本继续使用同一仓库的 Releases，用户不需要访问 Actions artifacts。
 
 实现依据：[electron-updater](https://www.electron.build/v26/docs/features/auto-update/)、[Electron macOS 更新要求](https://www.electronjs.org/docs/latest/api/auto-updater#macos)、[electron-builder 发布配置](https://www.electron.build/v26/docs/publish/)。
+
+当前版本的构建、公开下载和客户端检查结果见 [更新验证](validation-updates.md)。
