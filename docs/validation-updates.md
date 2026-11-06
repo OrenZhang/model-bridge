@@ -75,3 +75,7 @@ Linux 的正式文件名遵循打包器的架构命名：x64 AppImage 为 `linux
 - 浏览器验证默认自动适配、旧单选入口移除、高级设置初始折叠。零模型连接保存 Responses + Messages 后重新打开仍为两个选项，随后同步模型并重开，配置和发现的模型均保留。模拟测试不使用真实账号或 Key。
 - HTTP 集成验证明确配置多个原生接口时优先同协议；Chat-only 上游接收三个网关协议并自动转换，请求始终发给指定模型，不选择其他默认模型。
 - 隐藏模型后，OpenAI / Anthropic / Codex 目录和便携配置均排除；三种协议、流式 / 非流式、原始模型名、所有账号前缀、旧账号池路由全部返回 404，上游请求次数为零。新增同名通道并重新启用单个通道后仍隐藏，配置重新读取保留规则，只有明确重新勾选才恢复。
+
+发布提交 `580a4c9`。[Release 工作流](https://github.com/OrenZhang/model-bridge/actions/runs/42198960698) 五个平台及发布任务成功，[Checks](https://github.com/OrenZhang/model-bridge/actions/runs/42198960667) 全部通过。macOS 运行 224 项测试，Windows / Linux 运行 218 项并跳过 6 项仅适用于 macOS 的测试。五个平台均完成包内真实 Codex 配合模拟上游的多轮与工具调用验证。
+
+[v0.1.0-alpha.8](https://github.com/OrenZhang/model-bridge/releases/tag/v0.1.0-alpha.8) 已公开，23 项资产及 7 个安装包名称核对通过。本机已启动 alpha.8，四个服务商连接和模型目录保留，网关健康检查返回 200；未切换 Codex / Claude Code 的接入模式。
