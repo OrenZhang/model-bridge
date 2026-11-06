@@ -59,3 +59,9 @@ Linux 的正式文件名遵循打包器的架构命名：x64 AppImage 为 `linux
 - 真实 mihomo 测试验证 GitHub 可复用订阅节点路由，获取更新路由前后两个 AI 目标的选择结果不变；手动模式只返回手动选中的节点。
 - 浏览器模拟同步失败，截图确认完整错误提示显示在原生弹窗上方，未抢焦点；关闭弹窗后提示保持显示，超时后 popover 和提示一起关闭。模拟状态不包含真实密钥。
 - 本机 GPT 连接最初保存旧目录 3 项，重新同步暴露已失效授权；用户重新授权后自动同步为 8 项。设备码与浏览器登录使用同一目录接口，没有按登录方式限制模型数量。
+
+本机随后以独立设备码连接再次同步为 8 项；DeepSeek 用户重新保存有效 Key 后同步出 2 项。已启动 alpha.7 本地包，并用原生模型设置弹窗触发仅填写单侧价格的校验错误，提示完整显示在最上层，随后取消测试输入，没有保存模型价格。
+
+发布提交 `c9a7be5`。[Release 工作流](https://github.com/OrenZhang/model-bridge/actions/runs/42182746286) 五个平台及发布任务成功，[Checks](https://github.com/OrenZhang/model-bridge/actions/runs/42182745432) 全部通过。macOS 运行 211 项测试，Windows / Linux 运行 205 项并跳过 6 项仅适用于 macOS 的测试。两个 macOS 架构与 Windows 均通过原生代理认证、中断及取消测试；两个 Linux 架构通过打包桌面和凭据库检查，五个平台均通过包内 Codex 集成验证。
+
+[v0.1.0-alpha.7](https://github.com/OrenZhang/model-bridge/releases/tag/v0.1.0-alpha.7) 已公开，23 项资产及 README 的 7 个安装包名称核对通过。线上用户最后确认仍运行 alpha.5，因此尚不能用本机已升级后的目录数量代表该线上账号；需更新后重新同步核对。
