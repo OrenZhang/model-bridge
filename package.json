@@ -78,20 +78,8 @@
     "linux": {
       "icon": "assets/icon.png",
       "target": [
-        {
-          "target": "AppImage",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "deb",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
+        "AppImage",
+        "deb"
       ],
       "category": "Development",
       "executableName": "model-bridge"
