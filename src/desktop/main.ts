@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { writeFile, readFile, stat } from 'node:fs/promises';
 import { createRuntime, type Runtime } from '../core/runtime.js';
 import { DesktopVault } from './vault.js';
-import { usageCsv, usageView, usageSummary } from '../core/usage.js';
+import { usageCsv, usageView, usageSummary, USAGE_RETENTION_DAYS } from '../core/usage.js';
 import { resolveClientAddress } from '../clients/configure.js';
 import { atomicWrite } from '../core/store.js';
 import { strToU8, zipSync } from 'fflate';
@@ -42,7 +42,7 @@ else {
       try {
         switch (operation) {
           case 'state': {
-            const days = z.number().int().min(1).max(90).parse(payload?.days ?? 7);
+            const days = z.number().int().min(1).max(USAGE_RETENTION_DAYS).parse(payload?.days ?? USAGE_RETENTION_DAYS);
             const filters = z.object({ clientId: z.string().optional(), provider: z.string().optional(), connectionId: z.string().optional(), model: z.string().optional() }).parse(payload?.filters ?? {});
             const records = await active.usage.list(days);
             const config = active.store.get(); const address = active.gateway.address;
@@ -160,7 +160,7 @@ else {
             const address = payload.address && active.gateway.lanAddresses().includes(payload.address) ? payload.address : active.gateway.address;
             const { clipboard } = await import('electron'); clipboard.writeText(address + (kind === 'endpoint' ? paths[protocol] : protocol === 'messages' ? '' : '/v1')); return true;
           }
-          case 'usage.export': { const result = await dialog.showSaveDialog(window!, { defaultPath: 'model-bridge-usage.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] }); if (!result.canceled && result.filePath) await writeFile(result.filePath, '\ufeff' + usageCsv(await active.usage.list(90))); return !result.canceled; }
+          case 'usage.export': { const result = await dialog.showSaveDialog(window!, { defaultPath: 'model-bridge-usage.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] }); if (!result.canceled && result.filePath) await writeFile(result.filePath, '\ufeff' + usageCsv(await active.usage.list())); return !result.canceled; }
           case 'app.autostart': { const enabled = z.boolean().parse(payload.enabled); app.setLoginItemSettings({ openAtLogin: enabled }); return true; }
           default: throw new Error('Unknown operation.');
         }

@@ -158,12 +158,14 @@ npm run dev
 
 ## 数据存储
 
+桌面端默认位于系统应用数据目录：macOS 为 `~/Library/Application Support/Model Bridge/`，Windows 为 `%APPDATA%\Model Bridge\`，Linux 为 `$XDG_CONFIG_HOME/Model Bridge/`（未设置时为 `~/.config/Model Bridge/`）。无界面模式默认为 `~/.model-bridge/`；两种模式都可通过 `MODEL_BRIDGE_DATA_DIR` 指定目录。
+
 - `pool-routing.json`：对话散列、选中的账号与模型路由指纹、轮询位置；不记录提示词、原始会话 ID 或凭据。最多保留 10,000 个归属记录，达到限制后拒绝建立新归属，已有记录不会被自动淘汰。请与凭据和配置一同备份。
 - `config.json`：服务地址、模型能力、代理引用、客户端密钥散列。
 - `credentials.enc`：桌面凭据，使用 Electron safeStorage 加密。
 - `reasoning.key`：仅无界面模式使用的私有推理封装密钥；桌面模式将此密钥保存在 `credentials.enc`。密钥持久化后，重启网关仍可继续已有对话。
 - `accounts/<id>/codex/`：独立 Codex 登录目录。**官方 helper 的 `auth.json` 当前使用私有文件权限存储，尚未纳入桌面加密凭据库**；请勿分享该目录。
-- `usage/*.jsonl`：UTC 按天记录的调用元数据，不记录提示词或回复正文。界面最多查询 90 天，文件不会自动清理。
+- `usage/*.jsonl`：UTC 按天记录的调用元数据，不记录提示词或回复正文。统计和导出默认覆盖最近 60 个 UTC 日（含当天），最多保留 60 天；启动时、UTC 日期切换时及读写记录时自动清理过期日文件，不保留更早的汇总。
 - `backups/`：客户端配置备份。备份可能含原有客户端的凭据，不应上传到 GitHub。
 
 需求、架构与验收计划分别见 [需求范围](docs/requirements.md)、[架构](docs/architecture.md)、[路线图](docs/roadmap.md)。项目独立实现，参考同舟的交互边界，不复制其业务源码。

@@ -1,6 +1,10 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, unlink } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import type { Model, Protocol } from './config.js';
+
+export const USAGE_RETENTION_DAYS = 60;
+const DAY_MS = 86400000;
 
 export interface Tokens { input: number | null; output: number | null; cachedInput: number | null; cacheWrite: number | null; reasoning: number | null; }
 export const unknownTokens = (): Tokens => ({ input: null, output: null, cachedInput: null, cacheWrite: null, reasoning: null });
@@ -39,19 +43,47 @@ export function estimatedCost(model: Model, tokens: Tokens) {
 }
 export class UsageStore {
   private writes: Promise<void> = Promise.resolve();
-  constructor(private directory: string) {}
+  private lastPrunedDay?: string;
+  constructor(private directory: string, private now: () => number = Date.now) {}
+  private async pruneFiles(now: number) {
+    const today = new Date(now).toISOString().slice(0, 10);
+    if (this.lastPrunedDay === today) return;
+    const cutoff = new Date(now - (USAGE_RETENTION_DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
+    let entries: Dirent[];
+    try { entries = await readdir(this.directory, { withFileTypes: true }); }
+    catch (error: any) { if (error.code !== 'ENOENT') throw error; entries = []; }
+    for (const entry of entries) {
+      // Only delete our own daily records; leave unrelated files and directories alone.
+      if (!entry.isFile() || !/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name)) continue;
+      const day = entry.name.slice(0, 10);
+      const timestamp = Date.parse(`${day}T00:00:00.000Z`);
+      if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== day || day >= cutoff) continue;
+      await unlink(path.join(this.directory, entry.name));
+    }
+    this.lastPrunedDay = today;
+  }
+  async prune() {
+    const operation = this.writes.then(() => this.pruneFiles(this.now()));
+    this.writes = operation.catch(() => {}); await operation;
+  }
   async append(record: UsageRecord) {
     const operation = this.writes.then(async () => {
+      const now = this.now();
+      await this.pruneFiles(now);
+      const cutoff = new Date(now - (USAGE_RETENTION_DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
+      // A long-running request must not recreate a file that has already expired.
+      if (record.startedAt.slice(0, 10) < cutoff) return;
       await mkdir(this.directory, { recursive: true, mode: 0o700 });
       await appendFile(path.join(this.directory, `${record.startedAt.slice(0, 10)}.jsonl`), JSON.stringify(record) + '\n', { mode: 0o600 });
     });
     this.writes = operation.catch(() => {}); await operation;
   }
-  async list(days = 7) {
-    await this.writes;
+  async list(days = USAGE_RETENTION_DAYS) {
+    await this.prune();
+    const now = this.now();
     const result: UsageRecord[] = [];
-    for (let i = 0; i < Math.min(Math.max(1, days), 90); i++) {
-      const day = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+    for (let i = 0; i < Math.min(Math.max(1, days), USAGE_RETENTION_DAYS); i++) {
+      const day = new Date(now - i * DAY_MS).toISOString().slice(0, 10);
       try {
         const contents = await readFile(path.join(this.directory, `${day}.jsonl`), 'utf8');
         for (const line of contents.split('\n').filter(Boolean)) {
@@ -75,13 +107,14 @@ export function usageSummary(records: UsageRecord[]) {
 }
 export type UsageFilters = Partial<Pick<UsageRecord, 'clientId' | 'provider' | 'connectionId' | 'model'>>;
 export function usageView(records: UsageRecord[], filters: UsageFilters, days: number) {
+  const chartDays = Math.min(Math.max(1, days), USAGE_RETENTION_DAYS);
   const keys = ['clientId', 'provider', 'connectionId', 'model'] as const;
   const filtered = records.filter(record => keys.every(key => !filters[key] || record[key] === filters[key]));
   const dailyCounts = new Map<string, number>();
   for (const record of filtered) { const day = record.startedAt.slice(0, 10); dailyCounts.set(day, (dailyCounts.get(day) ?? 0) + 1); }
   return { summary: usageSummary(records), filteredSummary: usageSummary(filtered), records: filtered.slice(0, 200),
     usageOptions: Object.fromEntries(keys.map(key => [key, [...new Set(records.map(record => record[key]))].sort()])),
-    daily: Array.from({ length: Math.min(days, 7) }, (_, i) => { const date = new Date(Date.now() - (Math.min(days, 7) - 1 - i) * 86400000).toISOString().slice(0, 10); return { date, count: dailyCounts.get(date) ?? 0 }; }),
+    daily: Array.from({ length: chartDays }, (_, i) => { const date = new Date(Date.now() - (chartDays - 1 - i) * DAY_MS).toISOString().slice(0, 10); return { date, count: dailyCounts.get(date) ?? 0 }; }),
   };
 }
 export function usageCsv(records: UsageRecord[]) {

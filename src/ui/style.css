@@ -102,6 +102,9 @@ td small{display:block;font-size:10px;color:var(--muted);margin-top:4px;font-fam
 .stat .sub{color:var(--muted);font-size:10px;margin-top:7px}
 .usage-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .chart{height:150px;display:flex;align-items:flex-end;gap:16px;padding:25px 20px 15px}
+.chart.dense{gap:3px}
+.chart.dense .bar-group{min-width:0}
+.chart.dense small{white-space:nowrap}
 .bar-group{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px;height:100%;color:var(--muted)}
 .bar{background:#909ba6;min-height:2px;max-width:40px;width:100%;border-radius:3px 3px 0 0}
 .chart .empty{padding:10px}

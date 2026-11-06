@@ -45,6 +45,8 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
   });
 
   const usage = new UsageStore(path.join(directory, 'usage'));
+  let usageWriteFailed = false;
+  await usage.prune().catch(() => { usageWriteFailed = true; });
   let managed: ManagedNetworks;
   const network = new Network(() => store.get(), secrets, systemProxy, id => managed.proxyUrl(id));
   const clients = new ClientConfiguration(home, directory, process.env.CODEX_HOME ? path.resolve(process.env.CODEX_HOME) : undefined);
@@ -100,7 +102,6 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     }
     return logins.get(connection.id)!.login;
   }
-  let usageWriteFailed = false;
   const poolRouter = await new PoolRouter(path.join(directory, 'pool-routing.json')).load();
   const reasoningVault = await loadReasoningVault(directory, secrets);
   const gatewayOptions = { config: () => store.get(), secrets, network, usage, reasoningVault, poolRouter, chatgptCredentials: (c: Connection) => login(c).credentials(), subscriptionCredentials: async (c: Connection) => {
@@ -234,6 +235,15 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     if (subscription(connection).state.phase === 'authenticated' && connection.provider === 'minimax' && !connection.models.length) scheduleDiscovery(connection.id);
   }));
   let changingListener = false;
+  let usageCleanup: ReturnType<typeof setTimeout>;
+  function scheduleUsageCleanup() {
+    const now = Date.now();
+    const nextDay = (Math.floor(now / 86400000) + 1) * 86400000;
+    usageCleanup = setTimeout(() => {
+      void usage.prune().catch(() => { usageWriteFailed = true; }).finally(() => { if (!closed) scheduleUsageCleanup(); });
+    }, nextDay - now).unref();
+  }
+  scheduleUsageCleanup();
   return { store, network, usage, clients, get gateway() { return gateway; }, ensureClient, accessKey, createAccessKey, updateAccessKey, saveConnection, discover, scheduleDiscovery, localAccounts, managed,
     async setLanAccess(enabled: boolean) {
       if (changingListener || gateway.activeRequests() || discoveryTasks.size) throw new Error('正在处理请求，请完成后再更改服务监听设置。');
@@ -265,7 +275,7 @@ export async function createRuntime(directory: string, secrets: SecretStore, hom
     loginFor(id: string) { const connection = store.get().connections.find(c => c.id === id && ['chatgpt-device', 'subscription'].includes(c.auth)); if (!connection) throw new Error('ChatGPT connection not found.'); return connection.auth === 'subscription' ? subscription(connection) : login(connection); },
     loginStates() { return Object.fromEntries([...logins.entries(), ...subscriptions.entries()].map(([id, value]) => [id, value.login.state])); },
     usageWriteFailed: () => usageWriteFailed,
-    async close() { closed = true; for (const { login } of [...logins.values(), ...subscriptions.values()]) login.close(); await gateway.close(); await managed.close(); await Promise.allSettled(discoveryTasks.values()); await Promise.allSettled(identityUpdates); },
+    async close() { closed = true; clearTimeout(usageCleanup); for (const { login } of [...logins.values(), ...subscriptions.values()]) login.close(); await gateway.close(); await managed.close(); await Promise.allSettled(discoveryTasks.values()); await Promise.allSettled(identityUpdates); await usage.prune().catch(() => { usageWriteFailed = true; }); },
   };
 }
 export type Runtime = Awaited<ReturnType<typeof createRuntime>>;
