@@ -18,6 +18,8 @@ let loginStarting = false; let loginAttempt = 0;
 let portableKeyId='';
 let portableClient = 'codex'; let portableAddress = ''; let portableRevision = 0;
 let updateRecoveryShown = false;
+let updateMarkup = '';
+let updateNotesIdentity = '';
 
 async function call(operation: string, payload?: unknown) { return window.modelBridge.call(operation, payload); }
 function updatePanel() {
@@ -30,7 +32,25 @@ function updatePanel() {
   versionButton.textContent = `v${update.currentVersion}${['available', 'downloaded'].includes(update.phase) ? ' · 有更新' : ''}`;
   const canDownload = update.phase === 'available' || (update.phase === 'error' && update.retry === 'download');
   const canInstall = update.phase === 'downloaded' || (update.phase === 'error' && update.retry === 'install');
-  $('#update-content').innerHTML = `<p class="update-version">当前版本 <code>${escape(update.currentVersion)}</code>${update.latestVersion ? ` <span>→</span> <code>${escape(update.latestVersion)}</code>` : ''}</p><p role="status">${labels[update.phase]}</p>${update.phase === 'downloading' ? `<progress class="update-progress" max="100" value="${Math.min(100, Math.max(0, update.percent ?? 0))}" aria-label="更新下载进度"></progress><p class="hint">${Math.round(update.percent ?? 0)}%${update.total ? ` · ${(Number(update.transferred ?? 0) / 1048576).toFixed(1)} / ${(update.total / 1048576).toFixed(1)} MB` : ''}</p>` : ''}${update.message ? `<p class="${update.phase === 'error' ? 'notice' : 'hint'}">${escape(update.message)}</p>` : ''}${update.notes ? `<details class="update-notes"><summary>更新说明</summary><pre>${escape(update.notes)}</pre></details>` : ''}<p class="hint">安装时退出并自动重启应用。请等待模型请求完成后再安装，账号与配置保留。</p><div class="dialog-actions"><button class="plain" data-action="update-releases">查看 Releases</button><button class="secondary" data-action="update-check" ${busy || update.phase === 'development' ? 'disabled' : ''}>${update.phase === 'error' && update.retry === 'check' ? '重新检查' : '检查更新'}</button>${canDownload ? '<button class="primary" data-action="update-download">下载更新</button>' : ''}${canInstall ? `<button class="primary" data-action="update-install">安装并重启</button>` : ''}</div>`;
+  const markup = `<p class="update-version">当前版本 <code>${escape(update.currentVersion)}</code>${update.latestVersion ? ` <span>→</span> <code>${escape(update.latestVersion)}</code>` : ''}</p><p role="status">${labels[update.phase]}</p>${update.phase === 'downloading' ? `<progress class="update-progress" max="100" value="${Math.min(100, Math.max(0, update.percent ?? 0))}" aria-label="更新下载进度"></progress><p class="hint">${Math.round(update.percent ?? 0)}%${update.total ? ` · ${(Number(update.transferred ?? 0) / 1048576).toFixed(1)} / ${(update.total / 1048576).toFixed(1)} MB` : ''}</p>` : ''}${update.message ? `<p class="${update.phase === 'error' ? 'notice' : 'hint'}">${escape(update.message)}</p>` : ''}${update.notes ? `<details class="update-notes"><summary>更新说明</summary><pre>${escape(update.notes)}</pre></details>` : ''}<p class="hint">安装时退出并自动重启应用。请等待模型请求完成后再安装，账号与配置保留。</p><div class="dialog-actions"><button class="plain" data-action="update-releases">查看 Releases</button><button class="secondary" data-action="update-check" ${busy || update.phase === 'development' ? 'disabled' : ''}>${update.phase === 'error' && update.retry === 'check' ? '重新检查' : '检查更新'}</button>${canDownload ? '<button class="primary" data-action="update-download">下载更新</button>' : ''}${canInstall ? `<button class="primary" data-action="update-install">安装并重启</button>` : ''}</div>`;
+  const content = $('#update-content');
+  const identity = JSON.stringify([update.latestVersion ?? update.currentVersion, update.notes ?? '']);
+  if (markup === updateMarkup && content.hasChildNodes()) return;
+  const oldNotes = content.querySelector<HTMLDetailsElement>('.update-notes');
+  const expanded = identity === updateNotesIdentity && !!oldNotes?.open;
+  const notesScroll = oldNotes?.querySelector('pre')?.scrollTop ?? 0;
+  const dialog = $<HTMLDialogElement>('#update-dialog');
+  const dialogScroll = dialog.scrollTop;
+  content.innerHTML = markup;
+  const newNotes = content.querySelector<HTMLDetailsElement>('.update-notes');
+  if (newNotes) {
+    newNotes.open = expanded;
+    const text = newNotes.querySelector('pre');
+    if (text && expanded) text.scrollTop = notesScroll;
+  }
+  dialog.scrollTop = dialogScroll;
+  updateMarkup = markup;
+  updateNotesIdentity = identity;
 }
 function toast(message: string, error = false) { const element = $('#toast'); element.textContent = message.replace(/^Error invoking remote method '[^']+': Error: /, ''); element.classList.toggle('error', error); element.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => element.hidden = true, error ? 9000 : 4500); }
 async function action(operation: string, payload?: unknown, message?: string) { try { const result = await call(operation, payload); if (message) toast(message); await refresh(); return result; } catch (e: any) { toast(e.message ?? String(e), true); throw e; } }
