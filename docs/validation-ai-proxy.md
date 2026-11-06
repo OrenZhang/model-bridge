@@ -13,6 +13,7 @@
 - 单元测试覆盖定期检测、并发首次检测合并、失败冷却、停止时取消检测，以及 HTML、重定向、封禁、限流和错误响应的排除。
 - 禁止内核网络下载后，直接从安装包附带的官方压缩包安装成功；损坏的压缩包被 SHA-256 校验拒绝。
 - 浏览器使用模拟状态验证默认自动模式、各服务节点与延迟、手动切换和切回自动。浏览器测试不访问用户账号或订阅。
+- 本地打包应用的 ASAR 中已核对内核压缩包 SHA-256、版本清单和许可证；通过 Electron 从该 ASAR 离线安装内核并执行 -v 验证版本成功。
 - macOS 原生 powerSaveBlocker 取得 NoIdleSleepAssertion，停止后释放；未申请屏幕常亮。
 
 复现：先 npm run build，再 node scripts/prepare-mihomo.mjs，最后 node scripts/validate-ai-proxy.mjs。macOS 唤醒验证：npx electron scripts/validate-power-save.cjs。
@@ -22,3 +23,7 @@
 真实 mihomo 路由测试使用本机受控服务，不代表实际订阅中每个节点均可用。AI 接口探测不携带账号密钥，不生成内容；账号额度、套餐和模型权限仍需实际调用确认。首次检测耗时取决于节点数量和超时情况。自动切换只影响后续请求，不重放已经发出的模型请求。
 
 实现参考 Mihomo 官方 IN-USER 路由规则：https://wiki.metacubex.one/config/rules/#in-user 。系统唤醒使用 Electron 官方 powerSaveBlocker：https://www.electronjs.org/docs/latest/api/power-save-blocker 。
+
+## 发布平台验证
+
+[Release 流水线](https://github.com/OrenZhang/model-bridge/actions/runs/42168952904) 的 macOS ARM64 / x64、Windows x64、Linux x64 / ARM64 五个构建任务均通过。每个平台均执行真实 mihomo 路由与内置内核离线安装验证。macOS 执行 194 项回归，并核验原生唤醒断言；Windows / Linux 执行 188 项回归，跳过 6 项仅适用于 macOS 的更新助手测试。Linux 额外完成桌面及系统凭据库验证。
