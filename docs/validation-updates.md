@@ -45,3 +45,7 @@ Linux 的正式文件名遵循打包器的架构命名：x64 AppImage 为 `linux
 - 直接使用精简包内的 Codex 执行模拟 Kimi / MiniMax 通道，每个通道三轮对话、三次工具调用，验证流式 Responses、thinking 和工具结果回传。这是实际客户端配合模拟上游的集成测试，不代表真实订阅账户额度和服务状态。
 - 新版官方助手的隔离目录返回 12 项，过滤官方隐藏项后 9 项，包含用户截图中的 8 个型号；生产代码不硬编码这些名称。登录账号的模型权限以官方返回为准。
 - DeepSeek 覆盖 Bearer 鉴权、已保存 Key 的同站点路径变更保留、缺失 Key 和 HTTP 401 提示；未使用用户真实 Key 进行账户验证。
+
+发布代码为 `4a59324`，[Release 工作流](https://github.com/OrenZhang/model-bridge/actions/runs/42176410265) 的五个平台构建及最终发布均成功，[Checks](https://github.com/OrenZhang/model-bridge/actions/runs/42176410182) 也全部成功。macOS 运行 208 项测试，Windows / Linux 运行 202 项并跳过 6 项仅适用于 macOS 的测试。两个 macOS 架构通过原生托盘、防睡眠和更新代理会话测试；五个平台均使用精简包内的 Codex 主程序完成模拟上游集成验证。两个 Linux 架构通过打包桌面启动、加密凭据库及网关健康检查。
+
+[v0.1.0-alpha.6](https://github.com/OrenZhang/model-bridge/releases/tag/v0.1.0-alpha.6) 已公开，23 项资产包含 7 个安装包、更新元数据和校验文件，README 下载名称逐一匹配。CI 发布的 macOS ARM64 ZIP 为 243207458 字节，较 alpha.5 的 253188918 字节减少约 3.9%；本地构建与 CI 产物大小略有差异。
