@@ -12,19 +12,19 @@
 
 ## 下载安装
 
-当前为 **`0.1.0-alpha.2`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
+当前为 **`0.1.0-alpha.3`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
 
 | 系统 | 架构 | 安装包 |
 | --- | --- | --- |
-| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-mac-arm64.dmg) |
-| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-mac-x64.dmg) |
-| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-win-x64.exe) |
-| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-amd64.deb) |
-| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.2/Model-Bridge-0.1.0-alpha.2-linux-arm64.deb) |
+| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-mac-arm64.dmg) |
+| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-mac-x64.dmg) |
+| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-win-x64.exe) |
+| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-linux-amd64.deb) |
+| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.3/Model-Bridge-0.1.0-alpha.3-linux-arm64.deb) |
 
 macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未签名、公证；是否允许运行由系统安全设置决定。Linux 桌面需可用的系统凭据库，安装说明见 [Linux 文档](docs/linux.md)。
 
-**更新**：点击客户端左下角的版本号，检查新版本、查看说明并下载。下载完成后再安装，应用不会静默安装。Windows 和 Linux 通过对应平台的更新器安装并重启；macOS 下载并校验 DMG，打开后退出应用、拖入“应用程序”替换。账号、密钥和设置保存在独立数据目录。详见 [发布与更新](docs/updates.md)。
+**更新**：点击客户端左下角的版本号，检查新版本、查看说明并下载。下载完成后再安装，应用不会静默安装。macOS、Windows 和 Linux 均提供“安装并重启”。macOS 下载并校验 ZIP，在旧进程退出后原子替换应用，启动失败时自动恢复原版本，无需拖动 DMG。账号、密钥和设置保存在独立数据目录。详见 [发布与更新](docs/updates.md)。
 
 ## 开始使用
 
@@ -54,7 +54,7 @@ macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未�
 | 局域网服务 | 本机或局域网监听、独立访问 Key、分 Key 用量、跨平台配置脚本 |
 | 连接代理 | 按连接使用系统网络、直连、HTTP / HTTPS / SOCKS5，或 Clash / Mihomo YAML 订阅；不修改系统代理 |
 | 用量统计 | 请求数、成功率、输入 / 输出 / 缓存 Token、延迟与估算费用，支持筛选和 CSV；只保留最近 60 天，过期自动删除 |
-| 版本更新 | 从 GitHub Releases 检查版本，显示下载进度，校验安装包，提供对应平台的安装入口 |
+| 版本更新 | 从 GitHub Releases 检查版本，显示下载进度，校验安装包，一键安装并重启，macOS 启动失败时自动回退 |
 
 同模型分发以**新对话**为单位，不是每条消息换账号。后续消息、thinking 与工具结果保持原通道；原账号失效时明确报错。新的对话会暂时避开已知过期、无权限或限流的通道，不自动重发模型请求。
 

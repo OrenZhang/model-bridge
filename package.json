@@ -1,6 +1,6 @@
 {
   "name": "model-bridge",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "private": true,
   "description": "One local model gateway for Codex, Claude Code and other agents.",
   "type": "module",
@@ -10,14 +10,14 @@
   },
   "scripts": {
     "dev": "npm run build && node dist/cli.js",
-    "build": "node scripts/build-installer.mjs && tsc && tsc -p tsconfig.ui.json && node scripts/build-ui.mjs",
+    "build": "node scripts/build-installer.mjs && tsc && tsc -p tsconfig.ui.json && node scripts/build-ui.mjs && node scripts/build-mac-updater.mjs",
     "icons": "node scripts/build-icons.mjs",
     "start": "node dist/cli.js",
     "desktop": "npm run build && electron .",
     "check": "tsc --noEmit && tsc -p tsconfig.ui.json",
     "test": "vitest run",
     "package": "npm run build && electron-builder --publish never",
-    "pretest": "node scripts/build-installer.mjs",
+    "pretest": "node scripts/build-installer.mjs && node scripts/build-mac-updater.mjs",
     "package:linux": "npm run build && electron-builder --linux AppImage deb --publish never"
   },
   "dependencies": {

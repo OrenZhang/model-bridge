@@ -2,6 +2,7 @@ import { managedModels, models } from '../core/catalog.js';
 import { app, BrowserWindow, ipcMain, session, shell, dialog, Tray, Menu, nativeImage, net } from 'electron';
 import electronUpdater from 'electron-updater';
 import { DesktopUpdates, RELEASES_URL } from './updates.js';
+import { macApplication, macUpdateAttempt, macUpdateRollbackNotice, prepareMacUpdate } from './mac-updater.js';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -19,9 +20,20 @@ app.setName('Model Bridge');
 let runtime: Runtime | undefined; let window: BrowserWindow | undefined; let tray: Tray | undefined; let quitting = false;
 let updates: DesktopUpdates | undefined;
 let updateTimer: ReturnType<typeof setInterval> | undefined;
+let updateAttempt: Awaited<ReturnType<typeof macUpdateAttempt>>;
+let desktopReady = false;
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', () => { window?.show(); window?.focus(); });
+  app.on('second-instance', (_event, args) => {
+    window?.show(); window?.focus();
+    // A user may open the newly swapped app just before the helper launches it.
+    // Accept the helper's authenticated startup context on the existing instance.
+    if (process.platform === 'darwin' && app.isPackaged && args.includes('--model-bridge-update')) void app.whenReady().then(async () => {
+      const data = process.env.MODEL_BRIDGE_DATA_DIR ? path.resolve(process.env.MODEL_BRIDGE_DATA_DIR) : app.getPath('userData');
+      const attempt = await macUpdateAttempt(args, path.join(data, 'updates'), macApplication(process.execPath), app.getVersion());
+      if (attempt) { updateAttempt = attempt; if (desktopReady) await attempt.ready(); }
+    }).catch(() => {});
+  });
   app.on('activate', () => window?.show());
   app.on('before-quit', event => { if (quitting) return; event.preventDefault(); quitting = true; updates?.close(); clearInterval(updateTimer); void runtime?.close().finally(() => app.quit()); if (!runtime) app.quit(); });
   void app.whenReady().then(async () => {
@@ -29,6 +41,10 @@ else {
     const applicationIcon = nativeImage.createFromPath(path.join(app.getAppPath(), 'assets', 'icon.png'));
     if (process.platform === 'darwin') app.dock?.setIcon(applicationIcon);
     const data = process.env.MODEL_BRIDGE_DATA_DIR ? path.resolve(process.env.MODEL_BRIDGE_DATA_DIR) : app.getPath('userData');
+    if (process.platform === 'darwin' && app.isPackaged && process.argv.includes('--model-bridge-update')) {
+      updateAttempt = await macUpdateAttempt(process.argv, path.join(data, 'updates'), macApplication(process.execPath), app.getVersion());
+      if (!updateAttempt) throw new Error('更新启动信息无效。');
+    }
     const vault = new DesktopVault(path.join(data, 'credentials.enc'));
     runtime = await createRuntime(data, vault, os.homedir(), async destination => {
       const resolution = await session.defaultSession.resolveProxy(destination);
@@ -44,7 +60,14 @@ else {
     updates = new DesktopUpdates({ version: app.getVersion(), packaged: app.isPackaged, platform: process.platform, arch: process.arch,
       directory: path.join(data, 'updates'), engine: autoUpdater,
       fetch: (url, init) => net.fetch(url, init),
-      openInstaller: async file => { const error = await shell.openPath(file); if (error) throw new Error(error); },
+      installMacUpdate: async (archive, version, sha512) => {
+        if (active.gateway.activeRequests()) throw new Error('仍有模型请求进行中，请等待完成后再安装更新。');
+        const prepared = await prepareMacUpdate({ archive, sha512, version, currentVersion: app.getVersion(), currentApp: macApplication(process.execPath), applicationId: 'io.github.orenzhang.modelbridge', updatesDirectory: path.join(data, 'updates') });
+        try {
+          if (active.gateway.activeRequests()) throw new Error('仍有模型请求进行中，请等待完成后再安装更新。');
+          await prepared.start(); app.quit();
+        } catch (error) { await prepared.discard(); throw error; }
+      },
       installAndRestart: async () => {
         if (active.gateway.activeRequests()) throw new Error('仍有模型请求进行中，请等待完成后再安装更新。');
         // Use the normal before-quit handler to drain the gateway. If launching
@@ -53,6 +76,8 @@ else {
       },
       changed: state => { if (window && !window.isDestroyed()) window.webContents.send('model-bridge-update', state); },
     });
+    const updateRecovery = process.platform === 'darwin' && app.isPackaged ? await macUpdateRollbackNotice(process.argv, path.join(data, 'updates'), macApplication(process.execPath), app.getVersion()).catch(() => undefined) : undefined;
+    if (updateRecovery) updates.reportRecovery(updateRecovery);
     void active.localAccounts.scan();
     ipcMain.handle('model-bridge', async (event, operation: string, payload: any) => {
       if (event.sender !== window?.webContents || event.senderFrame !== window?.webContents.mainFrame) throw new Error('Invalid sender.');
@@ -193,7 +218,7 @@ else {
     window.on('close', event => { if (!quitting) { event.preventDefault(); window?.hide(); } });
     await window.loadFile(path.join(directory, '../ui/index.html'));
     if (app.isPackaged) {
-      void updates.check();
+      if (!updateRecovery) void updates.check();
       updateTimer = setInterval(() => { void updates?.check(); }, 6 * 60 * 60 * 1000).unref();
     }
     const pixels = Buffer.alloc(16 * 16 * 4);
@@ -206,7 +231,13 @@ else {
     tray = new Tray(icon);
     tray.setToolTip('Model Bridge'); tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开 Model Bridge', click: () => window?.show() }, { label: active.gateway.address, enabled: false }, { type: 'separator' }, { label: '退出', click: () => app.quit() }]));
     tray.on('click', () => window?.show());
+    desktopReady = true; await updateAttempt?.ready();
     console.info('Model Bridge desktop ready');
-  } catch (error) { dialog.showErrorBox('Model Bridge 启动失败', error instanceof Error ? error.message : 'Unknown error'); quitting = true; await runtime?.close(); app.quit(); }
+  } catch (error) {
+    if (process.argv.includes('--model-bridge-update')) {
+      await updateAttempt?.failed(error).catch(() => {}); quitting = true; await runtime?.close(); app.exit(1); return;
+    }
+    dialog.showErrorBox('Model Bridge 启动失败', error instanceof Error ? error.message : 'Unknown error'); quitting = true; await runtime?.close(); app.quit();
+  }
   });
 }

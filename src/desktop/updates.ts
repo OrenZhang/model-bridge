@@ -24,13 +24,13 @@ export interface UpdateEngine {
 export interface UpdateOptions {
   version: string; packaged: boolean; platform: NodeJS.Platform; arch: string; directory: string; engine: UpdateEngine;
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
-  openInstaller: (file: string) => Promise<void>; installAndRestart: () => Promise<void>;
+  installMacUpdate: (file: string, version: string, sha512: string) => Promise<void>; installAndRestart: () => Promise<void>;
   changed?: (state: UpdateState) => void;
 }
 
 export function macInstaller(info: ReleaseInfo, arch: string) {
   if (!valid(info.version) || !['arm64', 'x64'].includes(arch)) throw new Error('更新版本或处理器架构无效。');
-  const file = info.files.find(f => f.url === `Model-Bridge-${info.version}-mac-${arch}.dmg`);
+  const file = info.files.find(f => f.url === `Model-Bridge-${info.version}-mac-${arch}.zip`);
   if (!file || !/^[A-Za-z0-9+/]{86}==$/.test(file.sha512)) throw new Error('此版本没有适合当前 Mac 的安装包或校验信息。');
   return { ...file, address: `${RELEASES_URL}/download/v${info.version}/${encodeURIComponent(file.url)}` };
 }
@@ -50,7 +50,7 @@ export class DesktopUpdates {
   private cancellation?: DownloadCancellation;
   private closed = false;
   constructor(private options: UpdateOptions) {
-    this.state = { currentVersion: options.version, installMode: options.platform === 'darwin' ? 'installer' : 'restart', phase: options.packaged ? 'idle' : 'development' };
+    this.state = { currentVersion: options.version, installMode: 'restart', phase: options.packaged ? 'idle' : 'development' };
     const engine = options.engine;
     engine.autoDownload = false; engine.autoInstallOnAppQuit = false;
     engine.allowPrerelease = !!prerelease(options.version); engine.allowDowngrade = false;
@@ -64,13 +64,14 @@ export class DesktopUpdates {
     });
     engine.on('update-not-available', () => { this.info = undefined; this.set({ phase: 'current', latestVersion: undefined, notes: undefined, checkedAt: new Date().toISOString(), message: undefined, retry: undefined }); });
     engine.on('download-progress', progress => this.set({ phase: 'downloading', percent: progress.percent, transferred: progress.transferred, total: progress.total }));
-    engine.on('update-downloaded', () => { if (this.state.installMode === 'restart') this.set({ phase: 'downloaded', percent: 100 }); });
+    engine.on('update-downloaded', () => { if (this.options.platform !== 'darwin') this.set({ phase: 'downloaded', percent: 100 }); });
     engine.on('error', error => {
       if (this.state.phase === 'installing') this.fail(error, 'install');
       // Awaited check/download calls own their errors and retry state.
     });
   }
   snapshot() { return { ...this.state }; }
+  reportRecovery(message: string) { this.set({ phase: 'error', message, retry: 'check', recovered: true }); }
   private set(update: Partial<UpdateState>) {
     if (this.closed) return;
     this.state = { ...this.state, ...update }; this.options.changed?.(this.snapshot());
@@ -83,7 +84,7 @@ export class DesktopUpdates {
   check(): Promise<void> {
     if (this.checking) return this.checking;
     if (this.closed || !this.options.packaged || ['downloading', 'downloaded', 'installing'].includes(this.state.phase)) return Promise.resolve();
-    this.set({ phase: 'checking', message: undefined, retry: undefined });
+    this.set({ phase: 'checking', message: undefined, retry: undefined, recovered: false });
     this.checking = this.options.engine.checkForUpdates().then(result => {
       if (!result) throw new Error('请使用已安装的 NSIS、AppImage 或 Debian 版本检查更新。');
       this.cancellation = result.cancellationToken;
@@ -95,7 +96,7 @@ export class DesktopUpdates {
     if (this.downloading) return this.downloading;
     if (this.closed || !this.options.packaged || !this.info || !['available', 'error'].includes(this.state.phase)) return Promise.resolve();
     this.set({ phase: 'downloading', percent: 0, message: undefined, retry: undefined });
-    this.downloading = (this.state.installMode === 'installer' ? this.downloadMac() : this.options.engine.downloadUpdate(this.cancellation).then(() => {}))
+    this.downloading = (this.options.platform === 'darwin' ? this.downloadMac() : this.options.engine.downloadUpdate(this.cancellation).then(() => {}))
       .catch(error => { this.fail(error, 'download'); }).finally(() => { this.downloading = undefined; });
     return this.downloading;
   }
@@ -129,12 +130,11 @@ export class DesktopUpdates {
     if (this.closed || !(this.state.phase === 'downloaded' || (this.state.phase === 'error' && this.state.retry === 'install'))) return;
     this.set({ phase: 'installing', message: undefined, retry: undefined });
     try {
-      if (this.state.installMode === 'installer') {
+      if (this.options.platform === 'darwin') {
         if (!this.downloaded || await digest(this.downloaded.file).catch(() => '') !== this.downloaded.sha512) { this.downloaded = undefined; throw new Error('安装包已更改或丢失，请重新下载。'); }
-        await this.options.openInstaller(this.downloaded.file);
-        this.set({ phase: 'downloaded', message: '安装包已打开。退出 Model Bridge 后，将新版拖入“应用程序”替换，再重新启动。' });
+        await this.options.installMacUpdate(this.downloaded.file, this.info!.version, this.downloaded.sha512);
       } else await this.options.installAndRestart();
-    } catch (error) { this.fail(error, this.state.installMode === 'installer' && !this.downloaded ? 'download' : 'install'); }
+    } catch (error) { this.fail(error, this.options.platform === 'darwin' && !this.downloaded ? 'download' : 'install'); }
   }
   close() { this.closed = true; this.controller?.abort(); this.cancellation?.cancel(); }
 }

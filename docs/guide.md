@@ -69,7 +69,7 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 - ChatGPT 设备授权使用 Codex 的登录能力与账号凭据，**不等于 OpenAI Platform API Key**。当前本机 ChatGPT 账号与 OpenAI API Key 通道均已用真实 Codex 验证多轮和工具调用，不能承诺所有订阅、组织策略或未来版本均兼容。
 - Kimi Code / MiniMax Code 订阅 OAuth 已接入；不把 ACP 当成模型 HTTP 接口。当前没有内嵌 ACP Agent 会话，统一调用走官方订阅的模型通道。套餐剩余额度/官方账单未接入，本地统计只覆盖经过本网关的请求。认证边界和实测范围见 [订阅认证说明](provider-auth.md)。连接中的推理模式、独立访问密钥与 CoSail 设备标识见 [连接与服务控制](connection-controls.md)。
 - 未返回的用量记为未知，不从文本猜测 Token 数；费用为配置价格下的估算，不是订阅账单。线上协议必填用量字段可能使用零占位，本机统计保留未知状态。
-- 安装包通过 GitHub Releases 分发，当前为未签名的 Alpha。macOS 使用 DMG 手动替换；Windows 与 Linux 提供安装更新入口。CI 构建成功不等同于所有系统的人工交互验收。
+- 安装包通过 GitHub Releases 分发，当前为未签名的 Alpha。macOS、Windows 与 Linux 均提供“安装并重启”；macOS 使用 ZIP 原子替换应用，并在新版启动失败时回退。CI 构建成功不等同于所有系统的人工交互验收。
 - 本机账号复用只读取已知 Codex 登录格式；新版 secrets keyring 格式可能需要设备码重新授权。复制登录后与原客户端共用同一授权来源，令牌轮换后可能需要重新登录。
 - 代理订阅当前支持含 `proxies` 的 Clash / Mihomo YAML，不处理裸 URI/base64 订阅、远程 `proxy-providers` 链或任意插件配置；不支持的字段会报错。订阅内容和地址保存在加密凭据库，运行时生成的节点配置仅保存在私有临时目录。
 
