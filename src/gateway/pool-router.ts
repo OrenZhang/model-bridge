@@ -5,6 +5,7 @@ import { digest, routeFingerprint, reasoningScope, type ModelRoute } from '../co
 import { controlledRequest } from '../shared/reasoning-modes.js';
 import { atomicWrite } from '../core/store.js';
 import { isGatewayReasoning, type ReasoningVault } from './reasoning.js';
+import { upstreamProtocols } from '../shared/upstream-protocols.js';
 const StateSchema = z.object({ version: z.literal(1), cursor: z.record(z.string(), z.number().int().nonnegative()), bindings: z.record(z.string(), z.object({ connectionId: z.string(), fingerprint: z.string(), updatedAt: z.number() })) });
 type State = z.infer<typeof StateSchema>;
 function envelopes(input: any) {
@@ -19,7 +20,7 @@ function envelopes(input: any) {
 function sessionIdentity(input: any, session?: string) {
   if (session) return ['session', session];
   const messages = Array.isArray(input.input) ? input.input : input.messages;
-  const first = typeof input.input === 'string' ? input.input : messages?.find?.((item: any) => item.role === 'user')?.content;
+  const first = typeof input.input === 'string' ? input.input : messages?.find?.((item: any) => item?.role === 'user' && item.content !== undefined)?.content;
   if (first === undefined) throw new BridgeError(400, 'pool_session_required', 'Include user history or X-Model-Bridge-Session for stable account routing.');
   const content = typeof first === 'string' ? [{ type: 'text', text: first }] : Array.isArray(first) ? first.map((part: any) => ['text', 'input_text', 'output_text'].includes(part.type) ? { type: 'text', text: part.text } : part) : first;
   return ['first-user', content];
@@ -38,6 +39,47 @@ function supportsRequest(route: ModelRoute, input: any, protocol: Protocol) {
   if (effort && model.reasoning.length && !model.reasoning.includes(effort)) return false;
   return true;
 }
+
+function hasHistory(input: any) {
+  const history = Array.isArray(input.input) ? input.input : input.messages;
+  return input.previous_response_id || input.conversation || history?.some?.((item: any) =>
+    ['assistant', 'tool'].includes(item?.role) ||
+    ['reasoning', 'compaction', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output', 'tool_search_call', 'tool_search_output', 'web_search_call'].includes(item?.type));
+}
+
+/** Earlier turns are transcript context after a model switch. Keep the active
+ * turn intact so the selected model still receives its own tool and thinking state. */
+function portableResponsesHistory(items: any[]) {
+  const latestUser = items.findLastIndex(item => item?.role === 'user' && (!item.type || item.type === 'message'));
+  if (latestUser <= 0) return undefined;
+  const previousTurns = items.slice(0, latestUser);
+  if (!hasHistory({ input: previousTurns })) return undefined;
+  const history = previousTurns.flatMap(item => {
+    switch (item?.type) {
+      case 'reasoning':
+      case 'compaction':
+      case 'tool_search_call':
+      case 'tool_search_output':
+      case 'web_search_call':
+        return [];
+      case 'function_call':
+      case 'custom_tool_call':
+      case 'function_call_output':
+      case 'custom_tool_call_output': {
+        const label = item.type.endsWith('_output') ? 'Tool result' : 'Tool call';
+        const content = item.output ?? { name: item.name, namespace: item.namespace, arguments: item.arguments ?? item.input };
+        return [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: `[${label} ${item.call_id}] ${JSON.stringify(content)}` }] }];
+      }
+      default:
+        if (item?.role === 'assistant' && (!item.type || item.type === 'message')) {
+          return [{ type: 'message', role: 'assistant', content: item.content }];
+        }
+        return [item];
+    }
+  });
+  const activeTurn = items.slice(latestUser);
+  return { items: [...history, ...activeTurn], activeTurn };
+}
 export class PoolRouter {
   private state: State = { version: 1, cursor: {}, bindings: {} };
   private changes: Promise<unknown> = Promise.resolve();
@@ -48,14 +90,27 @@ export class PoolRouter {
     catch (error: any) { if (error.code !== 'ENOENT') throw new Error('Model pool routing state is invalid. Restore pool-routing.json before continuing existing conversations.'); }
     return this;
   }
-  select(pool: string, candidates: ModelRoute[], input: any, client: string, protocol: Protocol, vault: ReasoningVault, session?: string, previousPools: string[] = []) {
+  select(pool: string, candidates: ModelRoute[], input: any, client: string, protocol: Protocol, vault: ReasoningVault, session?: string, previousPools: string[] = [], options: { otherPools?: string[]; legacyFirstUser?: boolean } = {}) {
     const operation = this.changes.then(async () => {
-      const key = digest(JSON.stringify([client, pool, sessionIdentity(input, session)]));
+      const identity = sessionIdentity(input, session);
+      const bindingKey = (poolId: string, identityParts = identity) => digest(JSON.stringify([client, poolId, identityParts]));
+      const key = bindingKey(pool);
+      const historical = hasHistory(input);
+      const legacyIdentity = options.legacyFirstUser && historical && Array.isArray(input.input)
+        && input.input.some((item: any) => item?.role === 'user' && item.content !== undefined)
+        ? sessionIdentity(input) : undefined;
+      const boundFor = (poolId: string) => this.state.bindings[bindingKey(poolId)]
+        ?? (legacyIdentity && this.state.bindings[bindingKey(poolId, legacyIdentity)]);
+      const switched = protocol === 'responses' && Array.isArray(input.input) && historical && options.otherPools?.some(id => boundFor(id));
+      const portableHistory = switched && !input.previous_response_id && !input.conversation ? portableResponsesHistory(input.input) : undefined;
+      const portableInput = portableHistory?.items;
+      if (portableInput) input = { ...input, input: portableInput };
       const tokens = envelopes(input);
       const currentBound = this.state.bindings[key];
-      const previous = previousPools.map(old=>this.state.bindings[digest(JSON.stringify([client,old,sessionIdentity(input,session)]))]).filter(Boolean);
-      if (!currentBound && new Set(previous.map(b=>JSON.stringify([b!.connectionId,b!.fingerprint]))).size>1) throw new BridgeError(409,'pool_history_ambiguous','Multiple previous channels match this session. Start a new conversation.');
-      const bound = currentBound ?? previous[0];
+      const samePool = boundFor(pool);
+      const previous = previousPools.map(boundFor).filter(Boolean);
+      if (!samePool && new Set(previous.map(b=>JSON.stringify([b!.connectionId,b!.fingerprint]))).size>1) throw new BridgeError(409,'pool_history_ambiguous','Multiple previous channels match this session. Start a new conversation.');
+      const bound = samePool ?? previous[0];
       let selected: ModelRoute | undefined;
       if (bound) {
         selected = candidates.find(r => r.connection.id === bound.connectionId && routeFingerprint(r) === bound.fingerprint);
@@ -63,7 +118,8 @@ export class PoolRouter {
       }
       if (tokens.length) {
         const matches = candidates.filter(route => {
-          try { const upstream = route.model.protocols.includes(protocol) ? protocol : route.model.protocols[0]!;
+          try { const protocols = upstreamProtocols(route.connection, route.model.protocols);
+            const upstream = protocols.includes(protocol) ? protocol : protocols[0]!;
             const context = vault.context(reasoningScope(client, route), upstream, route.connection.provider, route.model.upstreamId);
             tokens.forEach(token => context.open(token)); return true;
           } catch { return false; }
@@ -74,8 +130,7 @@ export class PoolRouter {
       if (!selected) {
         // An unrecognized continuation may contain native signed/opaque state.
         // Never send that state to an account chosen as if this were a new chat.
-        const history = Array.isArray(input.input) ? input.input : input.messages;
-        if (input.previous_response_id || input.conversation || history?.some?.((m: any) => ['assistant', 'tool'].includes(m.role) || ['reasoning', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output', 'tool_search_call', 'tool_search_output', 'web_search_call'].includes(m.type))) throw new BridgeError(409, 'pool_history_unbound', 'Cannot identify the original account for this conversation. Start a new conversation.');
+        if (historical && (!portableHistory || hasHistory({ input: portableHistory.activeTurn }))) throw new BridgeError(409, 'pool_history_unbound', 'Cannot identify the original account for this conversation. Start a new conversation.');
         const compatible = candidates.filter(r=>supportsRequest(r,input,protocol));
         if (!compatible.length) throw new BridgeError(400,'model_capability_unavailable','No enabled channel supports the requested tools, images or thinking level.');
         const available = compatible.filter(r => (this.cooldown.get(r.connection.id) ?? 0) <= Date.now()).sort((a, b) => a.connection.id.localeCompare(b.connection.id));
@@ -95,7 +150,7 @@ export class PoolRouter {
         if (this.file) await atomicWrite(this.file, JSON.stringify(next));
         this.state = next;
       }
-      return structuredClone(selected);
+      return { ...structuredClone(selected), portableInput };
     });
     this.changes = operation.catch(() => {});
     return operation;

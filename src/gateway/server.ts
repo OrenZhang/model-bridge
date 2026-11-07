@@ -86,14 +86,30 @@ export async function startGateway(options: GatewayOptions) {
       if (req.method === 'GET' && url.pathname === '/v1/models') { json(res, 200, req.headers['anthropic-version'] ? anthropicCatalog(options.config()) : openaiCatalog(options.config())); return; }
       if (req.method === 'GET' && url.pathname === '/codex/models') { json(res, 200, codexCatalog(options.config())); return; }
       if (req.method !== 'POST' || !protocol) throw new BridgeError(404, 'not_found', 'Endpoint not found.');
-      const input = await body(req);
+      let input = await body(req);
       if (typeof input.model !== 'string') throw new BridgeError(400, 'model_required', 'Select a model from the gateway model list.');
       if (input.stream !== undefined && typeof input.stream !== 'boolean') throw new BridgeError(400, 'invalid_request', 'stream must be a boolean.');
       selected = input.model;
-      const candidates = poolCandidates(options.config(), selected);
-      const session = req.headers['x-model-bridge-session'] ?? req.headers['session_id'] ?? input.metadata?.user_id;
-      const previousPools = candidates?.length ? options.config().connections.flatMap(connection=>connection.models.filter(model=>model.upstreamId===candidates[0]!.model.upstreamId).map(model=>modelGroupId(connection,model))) : [];
-      route = candidates?.length ? await poolRouter.select(mergedModelId(candidates[0]!.model.upstreamId), candidates, input, clientId, protocol, reasoningVault, typeof session === 'string' ? session : undefined, [...new Set(previousPools)]) : resolveRoute(options.config(), selected);
+      const config = options.config();
+      const candidates = poolCandidates(config, selected);
+      const existingSession = req.headers['x-model-bridge-session'] ?? req.headers['session_id'] ?? input.metadata?.user_id;
+      const codexSession = protocol === 'responses' && typeof req.headers['session-id'] === 'string' ? req.headers['session-id'] : undefined;
+      const session = existingSession ?? codexSession;
+      if (candidates?.length) {
+        const modelId = candidates[0]!.model.upstreamId;
+        const previousPools = new Set<string>();
+        const otherPools = new Set<string>();
+        for (const connection of config.connections) for (const model of connection.models) {
+          if (model.upstreamId === modelId) previousPools.add(modelGroupId(connection, model));
+          else if (protocol === 'responses' && Array.isArray(input.input)) otherPools.add(mergedModelId(model.upstreamId));
+        }
+        const selection = await poolRouter.select(mergedModelId(modelId), candidates, input, clientId, protocol, reasoningVault,
+          typeof session === 'string' ? session : undefined, [...previousPools], {
+            otherPools: [...otherPools], legacyFirstUser: existingSession == null && codexSession !== undefined,
+          });
+        route = selection;
+        if (selection.portableInput) input = { ...input, input: selection.portableInput };
+      } else route = resolveRoute(config, selected);
       const { connection, model } = route;
       activeConnections.set(controller, connection.id);
       let controlled: any;

@@ -12,15 +12,15 @@
 
 ## 下载安装
 
-当前为 **`0.1.0-alpha.8`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
+当前为 **`0.1.0-alpha.9`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
 
 | 系统 | 架构 | 安装包 |
 | --- | --- | --- |
-| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.8/Model-Bridge-0.1.0-alpha.8-mac-arm64.dmg) |
-| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.8/Model-Bridge-0.1.0-alpha.8-mac-x64.dmg) |
-| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.8/Model-Bridge-0.1.0-alpha.8-win-x64.exe) |
-| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.8/Model-Bridge-0.1.0-alpha.8-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.8/Model-Bridge-0.1.0-alpha.8-linux-amd64.deb) |
-| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.8/Model-Bridge-0.1.0-alpha.8-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.8/Model-Bridge-0.1.0-alpha.8-linux-arm64.deb) |
+| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-mac-arm64.dmg) |
+| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-mac-x64.dmg) |
+| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-win-x64.exe) |
+| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-linux-amd64.deb) |
+| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-linux-arm64.deb) |
 
 安装包已附带对应平台的官方 mihomo 内核，首次使用自动校验并安装，无需另行下载；保留下载和离线导入入口。
 
@@ -32,9 +32,9 @@ macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未�
 
 1. **添加连接**：在“连接”中登录账号、复用本机 Codex 登录，或填写 API Key。对外统一支持三种协议，上游默认自动适配；自定义服务可在高级设置中配置一个或多个原生接口。连接后自动获取模型；服务商没有模型列表时，可使用预置目录或手动填写。
 2. **选择模型**：在“模型”页查看聚合目录。默认全部启用，取消勾选的模型不会出现在任何对外目录中，三种接口直接调用也会被拒绝；新增同名连接后仍保持隐藏。同名模型合并，只显示原始模型名。
-3. **接入客户端**：在“客户端”选择 Codex 或 Claude Code，启用“统一模型”。应用备份并写入本机配置；随后在客户端选择模型。切换后，已打开的客户端可能需要重启。
+3. **接入客户端**：打开“对外服务 → 本机接入与恢复”，在 Codex 或 Claude Code 一栏点击“接入本机网关”。应用备份并写入本机配置；随后在客户端选择模型。切换后，已打开的客户端可能需要重启。
 
-需要使用原来的账号时，在“客户端”切回“原始认证”。切换保留原有登录文件，也保留后来修改的不相关设置。
+需要使用原来的账号时，在“对外服务 → 本机接入与恢复”点击“恢复原始认证”。切换保留原有登录文件，也保留后来修改的不相关设置。
 
 ### 分享给局域网中的其他设备
 
@@ -52,7 +52,7 @@ macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未�
 | 同模型分发 | 相同原始模型 ID 跨账号、API Key、订阅通道合并，新对话在可用通道间轮询；已有对话保持账号归属 |
 | 推理模式 | 在连接中按模型设置 GPT 的推理等级，以及 Kimi、MiniMax、DeepSeek 等模型支持的模式；可跟随客户端或固定模式 |
 | 模型管理 | 自动发现、手动添加、同步目录；按模型控制是否对外提供，隐藏模型的直接调用也会被拒绝 |
-| 客户端切换 | Codex 桌面端 / CLI、Claude Code 在统一模型与原始认证之间切换；配置写入前备份 |
+| 本机接入与恢复 | Codex 桌面端 / CLI、Claude Code 在统一模型与原始认证之间切换；配置写入前备份 |
 | 局域网服务 | 本机或局域网监听、独立访问 Key、分 Key 用量、跨平台配置脚本 |
 | 连接代理 | 按连接使用系统网络、直连、HTTP / HTTPS / SOCKS5，或 Clash / Mihomo YAML 订阅；默认按 AI 接口可用性选择最低延迟节点，每 5 分钟复测，保留手动选择；不修改系统代理 |
 | 用量统计 | 请求数、成功率、输入 / 输出 / 缓存 Token、延迟与估算费用，支持筛选和 CSV；只保留最近 60 天，过期自动删除 |
