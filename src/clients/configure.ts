@@ -62,6 +62,7 @@ export interface ClientStatus {
   model?: string;
   connectionId?: string;
   modelAvailable?: boolean;
+  webSearch?: string;
   canRestore: boolean;
   error?: string;
 }
@@ -78,7 +79,7 @@ export class ClientConfiguration {
     if (!['http:', 'https:'].includes(url.protocol) || url.hostname === '0.0.0.0' || url.hostname === '[::]' || url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)) throw new Error('客户端需要可访问的网关基础地址，不能使用 0.0.0.0。');
     const base = address.replace(/\/+$/, '');
     const generated = client === 'codex'
-      ? { model_provider: 'model_bridge', model: target.id, model_catalog_json: 'codex-models.json', web_search: 'disabled', model_providers: { model_bridge: { name: 'Model Bridge', base_url: base + '/v1', wire_api: 'responses', requires_openai_auth: false, supports_websockets: false, experimental_bearer_token: token } } }
+      ? { model_provider: 'model_bridge', model: target.id, model_catalog_json: 'codex-models.json', web_search: config.webSearch ? 'live' : 'disabled', model_providers: { model_bridge: { name: 'Model Bridge', base_url: base + '/v1', wire_api: 'responses', requires_openai_auth: false, supports_websockets: false, experimental_bearer_token: token } } }
       : { env: { ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: token, ANTHROPIC_MODEL: target.id, ANTHROPIC_DEFAULT_OPUS_MODEL: target.id, ANTHROPIC_DEFAULT_SONNET_MODEL: target.id, ANTHROPIC_DEFAULT_HAIKU_MODEL: target.id, CLAUDE_CODE_SUBAGENT_MODEL: target.id } };
     const configuration = client === 'codex' ? stringify(generated) : JSON.stringify(generated, null, 2) + '\n';
     const filename = client === 'codex' ? 'config.toml' : 'settings.json';
@@ -122,7 +123,9 @@ export class ClientConfiguration {
       if (isBridge) {
         const selected = models(config).find(entry => matchesModel(entry,selectedModel));
         return { client, mode: 'bridge', serviceName: selected ? selected.members.length>1 ? '统一模型' : selected.connection.name : (selectedModel ? '原服务已移除或停用' : '统一模型（未选择默认模型）'), ...(selectedModel ? { model: selectedModel } : {}),
-          ...(selected?.members.length===1 ? { connectionId: selected.connection.id } : {}), modelAvailable: !!selected, canRestore };
+          ...(selected?.members.length===1 ? { connectionId: selected.connection.id } : {}),
+          ...(client === 'codex' && typeof existing.web_search === 'string' ? { webSearch: existing.web_search } : {}),
+          modelAvailable: !!selected, canRestore };
       }
       const native = client === 'codex' ? (!existing.model_provider || existing.model_provider === 'openai') && !baseUrl : !baseUrl;
       return { client, mode: 'external', serviceName: native ? defaultName : '外部服务',
@@ -161,8 +164,7 @@ export class ClientConfiguration {
       const existing: any = before ? parse(before) : {};
       existing.model_provider = 'model_bridge'; existing.model = target.id;
       existing.model_catalog_json = path.join(this.dataDirectory, 'codex-models.json');
-      // Codex can send its hosted web_search tool even when the catalog disables search support.
-      existing.web_search = 'disabled';
+      existing.web_search = config.webSearch ? 'live' : 'disabled';
       existing.model_providers = { ...existing.model_providers, model_bridge: { name: 'Model Bridge', base_url: address + '/v1', wire_api: 'responses', requires_openai_auth: false, supports_websockets: false, experimental_bearer_token: token } };
       generated = { model_provider: existing.model_provider, model: existing.model, model_catalog_json: existing.model_catalog_json, web_search: existing.web_search, model_providers: { model_bridge: existing.model_providers.model_bridge } };
       content = stringify(existing);

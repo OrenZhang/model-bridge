@@ -12,15 +12,15 @@
 
 ## 下载安装
 
-当前为 **`0.1.0-alpha.9`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
+当前为 **`0.1.0-alpha.10`** 开发预览。安装包与更新文件统一发布到 [GitHub Releases](https://github.com/OrenZhang/model-bridge/releases)。桌面应用自带运行时，无需安装 Node.js 或 Codex CLI。
 
 | 系统 | 架构 | 安装包 |
 | --- | --- | --- |
-| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-mac-arm64.dmg) |
-| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-mac-x64.dmg) |
-| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-win-x64.exe) |
-| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-linux-amd64.deb) |
-| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.9/Model-Bridge-0.1.0-alpha.9-linux-arm64.deb) |
+| macOS | Apple Silicon | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.10/Model-Bridge-0.1.0-alpha.10-mac-arm64.dmg) |
+| macOS | Intel | [DMG](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.10/Model-Bridge-0.1.0-alpha.10-mac-x64.dmg) |
+| Windows | x64 | [安装程序](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.10/Model-Bridge-0.1.0-alpha.10-win-x64.exe) |
+| Linux | x64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.10/Model-Bridge-0.1.0-alpha.10-linux-x86_64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.10/Model-Bridge-0.1.0-alpha.10-linux-amd64.deb) |
+| Linux | ARM64 | [AppImage](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.10/Model-Bridge-0.1.0-alpha.10-linux-arm64.AppImage) · [Debian / Ubuntu](https://github.com/OrenZhang/model-bridge/releases/download/v0.1.0-alpha.10/Model-Bridge-0.1.0-alpha.10-linux-arm64.deb) |
 
 安装包已附带对应平台的官方 mihomo 内核，首次使用自动校验并安装，无需另行下载；保留下载和离线导入入口。
 
@@ -35,6 +35,8 @@ macOS：打开 DMG，将应用拖入“应用程序”。当前安装包尚未�
 3. **接入客户端**：打开“对外服务 → 本机接入与恢复”，在 Codex 或 Claude Code 一栏点击“接入本机网关”。应用备份并写入本机配置；随后在客户端选择模型。切换后，已打开的客户端可能需要重启。
 
 需要使用原来的账号时，在“对外服务 → 本机接入与恢复”点击“恢复原始认证”。切换保留原有登录文件，也保留后来修改的不相关设置。
+
+在「对外服务」可为 Codex 配置联网搜索，由网关统一执行并附上来源。详见 [联网搜索](docs/guide.md#codex-联网搜索)。
 
 ### 分享给局域网中的其他设备
 

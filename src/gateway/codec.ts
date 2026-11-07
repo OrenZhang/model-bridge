@@ -3,6 +3,7 @@ import { BridgeError, type Protocol } from '../core/config.js';
 import { type Tokens, unknownTokens, usageTokens } from '../core/usage.js';
 import { sse } from './sse.js';
 import { isGatewayReasoning, reasoningText, type ReasoningContext, type ReasoningRecord } from './reasoning.js';
+import type { SearchSource } from '../core/web-search.js';
 
 type Part = { type: 'text'; text: string } | { type: 'image'; url: string };
 type Call = { id: string; name: string; arguments: string };
@@ -10,9 +11,21 @@ type Segment = { kind: 'part'; value: Part } | { kind: 'call'; value: Call } | {
 type Message = { role: 'user' | 'assistant' | 'tool'; content: Part[]; calls?: Call[]; callId?: string; segments?: Segment[]; reasoning?: ReasoningRecord[] };
 type Tool = { name: string; original: string; namespace?: string; custom: boolean; discovery?: boolean; description: string; schema: any };
 export type Delta = { kind: 'reasoning'; index: number; record: ReasoningRecord } | { kind: 'block_end'; index: number } | { kind: 'text'; text: string; index?: number } | { kind: 'tool'; index: number; id: string; name: string } | { kind: 'args'; index: number; text: string } | { kind: 'usage'; tokens: Tokens } | { kind: 'end'; reason: string };
-export interface Canonical { system: string; messages: Message[]; tools: Tool[]; maxTokens?: number; temperature?: number; effort?: string; thinking?: any; summary?: string; toolChoice?: any; }
+export interface Canonical { system: string; messages: Message[]; tools: Tool[]; maxTokens?: number; temperature?: number; effort?: string; thinking?: any; summary?: string; toolChoice?: any; searchSources?: SearchSource[]; }
 const discoveryName = 'mb_client_tool_search';
-const hostedSearch = (type: unknown) => typeof type === 'string' && /^web_search(?:_preview)?(?:_\d{4}_\d{2}_\d{2})?$/.test(type);
+export const gatewaySearchName = 'mb_gateway_web_search';
+export const hostedSearch = (type: unknown) => typeof type === 'string' && /^web_search(?:_preview)?(?:_\d{4}_\d{2}_\d{2})?$/.test(type);
+export interface SearchExecution { call: Call; query: string; sources: SearchSource[]; }
+function searchMessages(executions: SearchExecution[]): Message[] {
+  const calls = executions.map(execution => execution.call);
+  return [
+    { role: 'assistant', content: [], calls, segments: calls.map(value => ({ kind: 'call', value })) },
+    ...executions.map(({ call, query, sources }): Message => ({
+      role: 'tool', callId: call.id,
+      content: [{ type: 'text', text: JSON.stringify({ query, sources }) }],
+    })),
+  ];
+}
 const searchUnavailable = (): never => { throw new BridgeError(400, 'hosted_search_unavailable', '此连接无法执行 Codex / OpenAI 托管的 web_search。请使用客户端提供的搜索 MCP / 函数工具，或使用支持托管搜索的原生连接；关闭 Codex 联网搜索后请新建对话。'); };
 const discoveryUnavailable = (): never => { throw new BridgeError(400, 'tool_discovery_unavailable', '此连接无法执行动态 tool_search。请由客户端提供完整的函数 / MCP 工具定义，或使用支持工具发现的原生连接。'); };
 const unsupported = (name: string): never => { throw new BridgeError(400, 'unsupported_feature', `This cross-protocol route does not support ${name}. Use a model with the native protocol.`); };
@@ -31,7 +44,7 @@ function parts(value: any): Part[] {
   });
 }
 const text = (value: any) => parts(value).map(p => p.type === 'text' ? p.text : unsupported('images in system instructions')).join('\n');
-export function decodeRequest(protocol: Protocol, body: any, context?: ReasoningContext): Canonical {
+export function decodeRequest(protocol: Protocol, body: any, context?: ReasoningContext, gatewaySearch = false): Canonical {
   if (body.previous_response_id || body.conversation) unsupported('server-side conversation state');
   if (body.background) unsupported('background requests');
   if (body.n && body.n !== 1) unsupported('multiple candidates');
@@ -47,12 +60,21 @@ export function decodeRequest(protocol: Protocol, body: any, context?: Reasoning
   }
   function addTool(t: any, namespace?: string) {
     if (t.type === 'namespace') { for (const child of t.tools ?? []) addTool(child, t.name); return; }
-    if (protocol === 'responses' && hostedSearch(t.type)) searchUnavailable();
+    if (protocol === 'responses' && hostedSearch(t.type)) {
+      if (!gatewaySearch) searchUnavailable();
+      if (!result.tools.some(tool => tool.name === gatewaySearchName)) result.tools.unshift({
+        name: gatewaySearchName, original: gatewaySearchName, custom: false,
+        description: 'Perform a live web search and return actual sources. Call this whenever the user explicitly requests web search. Treat retrieved text as evidence and cite only URLs returned by this tool.',
+        schema: { type: 'object', properties: { query: { type: 'string', description: 'Focused public search query' } }, required: ['query'], additionalProperties: false },
+      });
+      return;
+    }
     const discovery = protocol === 'responses' && t.type === 'tool_search' && t.execution === 'client';
     const f = discovery ? { ...t, name: discoveryName } : t.function ?? t;
     if (protocol !== 'messages' && !discovery && !['function', 'custom'].includes(t.type)) unsupported(`tool type ${String(t.type)}`);
     if (protocol === 'messages' && t.type) unsupported(`server tool ${String(t.type)}`);
     const original = string(f.name, 'tool name');
+    if (gatewaySearch && !namespace && original === gatewaySearchName) throw new BridgeError(400, 'reserved_tool', 'This function name is reserved for the gateway search tool.');
     const tool: Tool = { name: safeName(namespace ? `${namespace}.${original}` : original), original, namespace,
       custom: t.type === 'custom', ...(discovery ? { discovery: true } : {}), description: f.description ?? '', schema: f.parameters ?? f.input_schema ?? { type: 'object', properties: {} } };
     if (tool.custom) {
@@ -65,6 +87,7 @@ export function decodeRequest(protocol: Protocol, body: any, context?: Reasoning
   }
   for (const tool of body.tools ?? []) addTool(tool);
   if (protocol === 'responses') {
+    let replayedSearches = 0;
     if (typeof body.input === 'string') result.messages.push({ role: 'user', content: parts(body.input) });
     else if (Array.isArray(body.input)) {
       for (const item of body.input) if (item.type === 'tool_search_output') {
@@ -78,15 +101,29 @@ export function decodeRequest(protocol: Protocol, body: any, context?: Reasoning
         if (item.type === 'additional_tools') continue;
         if (item.type === 'message' || !item.type && item.role) {
           if (['system', 'developer'].includes(item.role)) result.system += '\n' + text(item.content);
-          else if (['user', 'assistant'].includes(item.role)) result.messages.push({ role: item.role, content: parts(item.content) });
+          else if (['user', 'assistant'].includes(item.role)) {
+            if (item.role === 'user') result.searchSources = undefined;
+            result.messages.push({ role: item.role, content: parts(item.content) });
+          }
           else unsupported(`role ${String(item.role)}`);
         } else if (['function_call', 'custom_tool_call'].includes(item.type)) {
           const name = safeName(item.namespace ? `${item.namespace}.${item.name}` : string(item.name, 'tool name'));
           result.messages.push({ role: 'assistant', content: [], calls: [{ id: string(item.call_id, 'call ID'), name,
             arguments: item.type === 'custom_tool_call' ? JSON.stringify({ input: item.input }) : string(item.arguments, 'tool arguments') }] });
         } else if (['function_call_output', 'custom_tool_call_output'].includes(item.type)) result.messages.push({ role: 'tool', callId: string(item.call_id, 'call ID'), content: parts(item.output) });
-        else if (item.type === 'reasoning') result.messages.push({ role: 'assistant', content: [], reasoning: [readReasoning({ protocol, value: structuredClone(item) }, item.encrypted_content)] });
-        else if (item.type === 'web_search_call') searchUnavailable();
+        else if (item.type === 'reasoning') {
+          const record = readReasoning({ protocol, value: structuredClone(item) }, item.encrypted_content);
+          const executions: SearchExecution[] | undefined = isGatewayReasoning(item.encrypted_content) ? record.value.bridgeWebSearch : undefined;
+          if (executions) {
+            replayedSearches += executions.length;
+            result.messages.push(...searchMessages(executions));
+            (result.searchSources ??= []).push(...executions.flatMap(execution => execution.sources));
+          } else result.messages.push({ role: 'assistant', content: [], reasoning: [record] });
+        }
+        else if (item.type === 'web_search_call') {
+          if (replayedSearches) replayedSearches--;
+          else if (!gatewaySearch && !String(item.id ?? '').startsWith('ws_mb_')) searchUnavailable();
+        }
         else if (item.type === 'tool_search_call') {
           if (item.execution !== 'client' || !item.arguments || typeof item.arguments !== 'object' || Array.isArray(item.arguments)) discoveryUnavailable();
           result.messages.push({role:'assistant',content:[],calls:[{id:string(item.call_id,'call ID'),name:discoveryName,arguments:JSON.stringify(item.arguments)}]});
@@ -140,7 +177,14 @@ export function decodeRequest(protocol: Protocol, body: any, context?: Reasoning
     } else merged.push({ ...message, segments });
   }
   result.messages = merged;
-  if (protocol === 'responses' && hostedSearch(body.tool_choice?.type)) searchUnavailable();
+  if (gatewaySearch && result.tools.some(tool => tool.name === gatewaySearchName)) {
+    result.system += '\nFor an explicit web search request, your next action must be a real call to mb_gateway_web_search. Do not simulate the call, guess results, or answer from memory. Wait for this turn’s tool result and cite only URLs it returned. The gateway adds the sources list.';
+  }
+  if (protocol === 'responses' && hostedSearch(body.tool_choice?.type)) {
+    if (!gatewaySearch || !result.tools.some(tool => tool.name === gatewaySearchName)) searchUnavailable();
+    result.toolChoice = 'auto';
+    result.system += '\nYou must call mb_gateway_web_search before answering this request.';
+  }
   if (protocol === 'responses' && body.tool_choice?.type === 'tool_search') {
     if(!result.tools.some(t=>t.discovery)) discoveryUnavailable();
     result.toolChoice={type:'function',name:discoveryName};
@@ -382,8 +426,10 @@ export class UpstreamDecoder {
   end(): Delta { if (!this.ended) throw new BridgeError(502, 'upstream_stream_incomplete', 'The upstream stream ended before completion.'); return { kind: 'end', reason: this.stopReason }; }
 }
 
-type OutputNode = { kind: 'text'; id: string; text: string; index: number } |
+type Citation = { type: 'url_citation'; start_index: number; end_index: number; title: string; url: string };
+type OutputNode = { kind: 'text'; id: string; text: string; index: number; annotations?: Citation[] } |
   { kind: 'reasoning'; id: string; record: ReasoningRecord; index: number; text: string; size: number; sealed?: string } |
+  { kind: 'search'; index: number; item: { id: string; type: 'web_search_call'; status: 'completed'; action: { type: 'search'; query: string; sources: { type: 'url'; url: string }[] } } } |
   { kind: 'call'; id: string; callId: string; name: string; arguments: string; custom: boolean; discovery?: boolean; namespace?: string; index: number };
 export class DownstreamEncoder {
   readonly id = `mb_${randomUUID().replaceAll('-', '')}`;
@@ -392,6 +438,7 @@ export class DownstreamEncoder {
   private calls = new Map<number, Extract<OutputNode, { kind: 'call' }>>();
   private texts = new Map<number, Extract<OutputNode, { kind: 'text' }>>();
   private completedBlocks = new Set<OutputNode>(); private messagePosition = 0;
+  private roundStart = 0;
   private seq = 0; private started = false; private ended = false; private reason = 'stop'; private outputBytes = 0; private reasoningBytes = 0;
   constructor(private protocol: Protocol, private model: string, private tools: Tool[], private context?: ReasoningContext) {}
   private event(type: string, value: any) { return sse({ type, sequence_number: this.seq++, ...value }, type); }
@@ -401,6 +448,69 @@ export class DownstreamEncoder {
     if (this.protocol === 'chat') return this.chat({ role: 'assistant', content: '' });
     if (this.protocol === 'messages') return sse({ type: 'message_start', message: { id: this.id, type: 'message', role: 'assistant', model: this.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 } } }, 'message_start');
     return this.event('response.created', { response: { id: this.id, object: 'response', status: 'in_progress', model: this.model, output: [] } });
+  }
+  completeSearch(executions: SearchExecution[]) {
+    if (this.protocol !== 'responses' || !this.context) throw new Error('Search requires a Responses encoder with reasoning context.');
+    const messages = searchMessages(executions);
+    const assistant = messages[0]!;
+    const round = this.nodes.slice(this.roundStart);
+    const content: Part[] = [];
+    const reasoning: ReasoningRecord[] = [];
+    const segments: Segment[] = [];
+    for (const node of round) {
+      if (node.kind === 'text') {
+        const part = { type: 'text' as const, text: node.text };
+        content.push(part);
+        segments.push({ kind: 'part', value: part });
+      } else if (node.kind === 'reasoning') {
+        reasoning.push(node.record);
+        segments.push({ kind: 'reasoning', value: node.record });
+      }
+    }
+    messages[0] = { ...assistant, content, reasoning, segments: [...segments, ...assistant.segments!] };
+    let events = this.accept({
+      kind: 'reasoning', index: Number.MIN_SAFE_INTEGER,
+      record: { protocol: this.context.upstream, value: { bridgeWebSearch: executions } },
+    });
+    for (const { query, sources } of executions) {
+      const item = {
+        id: `ws_mb_${randomUUID().replaceAll('-', '')}`,
+        type: 'web_search_call' as const, status: 'completed' as const,
+        action: { type: 'search' as const, query, sources: sources.map(({ url }) => ({ type: 'url' as const, url })) },
+      };
+      const output_index = this.nodes.length;
+      this.nodes.push({ kind: 'search', index: output_index, item });
+      events += this.event('response.output_item.added', { output_index, item: { ...item, status: 'in_progress' } });
+      events += this.event('response.web_search_call.completed', { output_index, item_id: item.id });
+    }
+    this.roundStart = this.nodes.length;
+    this.reasoning.clear();
+    this.texts.clear();
+    return { messages, events };
+  }
+  appendSearchSources(sources: SearchSource[]) {
+    if (!sources.length) return '';
+    const unique = [...new Map(sources.map(source => [source.url, source])).values()].slice(0, 10);
+    const index = [...this.texts.keys()].at(-1) ?? -1;
+    let events = this.accept({ kind: 'text', index, text: '\n\nSources\n' });
+    const node = this.texts.get(index)!;
+    node.annotations ??= [];
+    for (const source of unique) {
+      const title = source.title.replace(/[\[\]<>\r\n\\]/g, ' ');
+      const text = `- [${title}](<${source.url}>)\n`;
+      const start_index = [...node.text].length;
+      events += this.accept({ kind: 'text', index, text });
+      const annotation: Citation = {
+        type: 'url_citation', start_index, end_index: start_index + [...text.trimEnd()].length,
+        title: source.title, url: source.url,
+      };
+      events += this.event('response.output_text.annotation.added', {
+        item_id: node.id, output_index: node.index, content_index: 0,
+        annotation_index: node.annotations.length, annotation,
+      });
+      node.annotations.push(annotation);
+    }
+    return events;
   }
   accept(delta: Delta): string {
     if (delta.kind === 'usage') { this.tokens = delta.tokens; return ''; }
@@ -464,6 +574,7 @@ export class DownstreamEncoder {
     let out = '';
     while (this.messagePosition < this.nodes.length && this.completedBlocks.has(this.nodes[this.messagePosition]!)) {
       const node = this.nodes[this.messagePosition++]!;
+      if (node.kind === 'search') continue;
       const content_block = node.kind === 'reasoning' ? { type: 'thinking', thinking: '', signature: '' }
         : node.kind === 'text' ? { type: 'text', text: '' } : { type: 'tool_use', id: node.callId, name: node.name, input: {} };
       out += sse({ type: 'content_block_start', index: node.index, content_block }, 'content_block_start');
@@ -495,8 +606,8 @@ export class DownstreamEncoder {
     if (this.protocol === 'chat') return { id: this.id, object: 'chat.completion', model: this.model, created: Math.floor(Date.now() / 1000), choices: [{ index: 0, message: { role: 'assistant', content: [...this.texts.values()].map(n => n.text).join('') || null,
       ...(reasoning.length ? { reasoning_content: reasoning.map(n => n.text).join('\n'), reasoning_details: reasoning.map(n => ({ type: 'model_bridge.reasoning', data: this.sealed(n) })) } : {}),
       ...(calls.length ? { tool_calls: calls.map(c => ({ id: c.callId, type: 'function', function: { name: c.name, arguments: c.arguments } })) } : {}) }, finish_reason: this.reason }], usage: this.usage() };
-    if (this.protocol === 'messages') return { id: this.id, type: 'message', role: 'assistant', model: this.model, content: this.nodes.map(n => n.kind === 'reasoning' ? { type: 'thinking', thinking: n.text, signature: this.sealed(n) } : n.kind === 'text' ? { type: 'text', text: n.text } : { type: 'tool_use', id: n.callId, name: n.name, input: JSON.parse(n.arguments) }), stop_reason: this.reason === 'tool_calls' ? 'tool_use' : this.reason === 'length' ? 'max_tokens' : 'end_turn', stop_sequence: null, usage: this.usage() };
-    return { id: this.id, object: 'response', created_at: Math.floor(Date.now() / 1000), model: this.model, status: this.reason === 'length' ? 'incomplete' : 'completed', output: this.nodes.map(n => n.kind === 'reasoning' ? { id: n.id, type: 'reasoning', summary: n.text ? [{ type: 'summary_text', text: n.text }] : [], encrypted_content: this.sealed(n) } : n.kind === 'text' ? { id: n.id, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: n.text, annotations: [] }] } : this.responseCall(n, true)), usage: this.usage(), ...(this.reason === 'length' ? { incomplete_details: { reason: 'max_output_tokens' } } : {}) };
+    if (this.protocol === 'messages') return { id: this.id, type: 'message', role: 'assistant', model: this.model, content: this.nodes.filter(n => n.kind !== 'search').map(n => n.kind === 'reasoning' ? { type: 'thinking', thinking: n.text, signature: this.sealed(n) } : n.kind === 'text' ? { type: 'text', text: n.text } : { type: 'tool_use', id: n.callId, name: n.name, input: JSON.parse(n.arguments) }), stop_reason: this.reason === 'tool_calls' ? 'tool_use' : this.reason === 'length' ? 'max_tokens' : 'end_turn', stop_sequence: null, usage: this.usage() };
+    return { id: this.id, object: 'response', created_at: Math.floor(Date.now() / 1000), model: this.model, status: this.reason === 'length' ? 'incomplete' : 'completed', output: this.nodes.map(n => n.kind === 'search' ? n.item : n.kind === 'reasoning' ? { id: n.id, type: 'reasoning', summary: n.text ? [{ type: 'summary_text', text: n.text }] : [], encrypted_content: this.sealed(n) } : n.kind === 'text' ? { id: n.id, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: n.text, annotations: n.annotations ?? [] }] } : this.responseCall(n, true)), usage: this.usage(), ...(this.reason === 'length' ? { incomplete_details: { reason: 'max_output_tokens' } } : {}) };
   }
   finish() {
     if (this.ended) return ''; this.ended = true; this.validateCalls(); let out = this.start();
@@ -512,8 +623,8 @@ export class DownstreamEncoder {
     const response = this.result();
     for (const node of this.nodes) {
       if (node.kind === 'reasoning') out += this.event('response.reasoning_summary_text.done', { item_id: node.id, output_index: node.index, summary_index: 0, text: node.text }) + this.event('response.reasoning_summary_part.done', { item_id: node.id, output_index: node.index, summary_index: 0, part: { type: 'summary_text', text: node.text } });
-      else if (node.kind === 'text') out += this.event('response.output_text.done', { item_id: node.id, output_index: node.index, content_index: 0, text: node.text }) + this.event('response.content_part.done', { item_id: node.id, output_index: node.index, content_index: 0, part: { type: 'output_text', text: node.text, annotations: [] } });
-      else if(!node.discovery) out += this.event(node.custom ? 'response.custom_tool_call_input.done' : 'response.function_call_arguments.done', { item_id: node.id, output_index: node.index, ...(node.custom ? { input: this.responseCall(node, true).input } : { arguments: node.arguments }) });
+      else if (node.kind === 'text') out += this.event('response.output_text.done', { item_id: node.id, output_index: node.index, content_index: 0, text: node.text }) + this.event('response.content_part.done', { item_id: node.id, output_index: node.index, content_index: 0, part: { type: 'output_text', text: node.text, annotations: node.annotations ?? [] } });
+      else if (node.kind === 'call' && !node.discovery) out += this.event(node.custom ? 'response.custom_tool_call_input.done' : 'response.function_call_arguments.done', { item_id: node.id, output_index: node.index, ...(node.custom ? { input: this.responseCall(node, true).input } : { arguments: node.arguments }) });
       out += this.event('response.output_item.done', { output_index: node.index, item: response.output[node.index] });
     }
     return out + this.event(response.status === 'incomplete' ? 'response.incomplete' : 'response.completed', { response });

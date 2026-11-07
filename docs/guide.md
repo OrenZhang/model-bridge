@@ -31,6 +31,17 @@ Claude Code ──────── Messages ──┼─ 127.0.0.1:18765 ─ �
 
 模型请求遇到网络连接失败或 HTTP 502/503/504 时，当前节点会暂时避开 60 秒，后续请求使用其他通过检测的节点。当前请求不会自动重发；已经开始的流保持原隧道。没有可用节点时明确报错，不回退直连。桌面模式运行期间保持系统唤醒，关闭窗口留在托盘时继续生效，退出后释放；屏幕仍可熄灭，手动睡眠或合盖行为由操作系统决定。
 
+## Codex 联网搜索
+
+1. 在「对外服务 → 联网搜索」选择 SearXNG 或 Tavily，保存后点击「测试已保存的服务」。
+2. SearXNG 填写实例的基础地址，并在实例设置的 `search.formats` 中启用 `json`。Tavily 填写 API Key，密钥加密存于本网关。
+3. 已接入的 Codex 在「本机接入与恢复」点击「更新 Codex 配置」并重启。远程设备可重新导出接入配置，或在其 Model Bridge 配置中设定 `web_search = "live"`。
+4. 在 Codex 中提出搜索请求。Model Bridge 调用搜索服务，将结果交给当前模型并附上来自搜索结果的来源链接。
+
+此功能处理 Responses 的 `web_search` 和 `web_search_preview` 搜索请求。默认由模型选择是否调用工具。客户端可以用 `tool_choice: {"type":"web_search"}` 要求实际调用。搜索请求会将查询发送到配置的搜索服务，正文与工具历史继续通过所选模型连接传输。可用的搜索方式和来源取决于所配置服务及启用的引擎。
+
+服务配置参考 [SearXNG Search API](https://docs.searxng.org/dev/search_api.html) 和 [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)。
+
 ## 已实现与边界
 
 | 能力 | Alpha 状态 |

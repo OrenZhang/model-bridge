@@ -6,6 +6,7 @@ import { updateProxyRules, chooseUpdateProxy, environmentUpdateProxies, type Upd
 import { UpdateTransport } from './update-transport.js';
 import { macApplication, macUpdateAttempt, macUpdateRollbackNotice, prepareMacUpdate } from './mac-updater.js';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { writeFile, readFile, stat } from 'node:fs/promises';
@@ -16,7 +17,8 @@ import { resolveClientAddress } from '../clients/configure.js';
 import { atomicWrite } from '../core/store.js';
 import { strToU8, zipSync } from 'fflate';
 import { z } from 'zod';
-import { ConnectionSchema } from '../core/config.js';
+import { ConnectionSchema, SearchConfigSchema } from '../core/config.js';
+import { WebSearch } from '../core/web-search.js';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 app.setName('Model Bridge');
@@ -170,6 +172,33 @@ else {
           case 'access.update': return active.updateAccessKey(z.string().parse(payload.id),z.object({name:z.string().trim().min(1).max(100).optional(),enabled:z.boolean().optional()}).parse(payload));
           case 'access.copy': {const {clipboard}=await import('electron');clipboard.writeText(await active.accessKey(z.string().parse(payload.id)));return true;}
           case 'service.lan': return active.setLanAccess(z.boolean().parse(payload.enabled));
+          case 'search.save': {
+            const form = z.object({
+              provider: z.enum(['off', 'searxng', 'tavily']), baseUrl: z.string().optional(),
+              apiKey: z.string().trim().max(512).optional(),
+            }).parse(payload);
+            const replacement = form.provider === 'tavily' && form.apiKey ? `search:tavily:${randomUUID()}` : undefined;
+            if (replacement) await vault.set(replacement, form.apiKey!);
+            await active.store.update(current => {
+              if (form.provider === 'off') {
+                delete current.webSearch;
+              } else if (form.provider === 'searxng') {
+                current.webSearch = SearchConfigSchema.parse({ provider: 'searxng', baseUrl: form.baseUrl?.trim() });
+              } else {
+                const secretRef = replacement ?? (current.webSearch?.provider === 'tavily' ? current.webSearch.secretRef : undefined);
+                if (!secretRef) throw new Error('请输入 Tavily API Key。');
+                current.webSearch = { provider: 'tavily', secretRef };
+              }
+            });
+            return true;
+          }
+          case 'search.test': {
+            const settings = active.store.get().webSearch;
+            if (!settings) throw new Error('请先保存搜索服务。');
+            const sources = await new WebSearch(active.network, vault).search(settings, 'SQLite write-ahead logging', [], new AbortController().signal);
+            if (!sources.length) throw new Error('搜索服务已连接，但测试查询没有返回来源。');
+            return sources.length;
+          }
           case 'network.save': return active.managed.save(payload);
           case 'network.refresh': return active.managed.refresh(z.string().parse(payload.id));
           case 'network.select': return active.managed.select(z.string().parse(payload.id), z.string().parse(payload.node));

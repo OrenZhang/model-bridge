@@ -18,6 +18,8 @@ import { applyThinking, decodeRequest, encodeRequest, UpstreamDecoder, Downstrea
 import { SSEDecoder, sse } from './sse.js';
 import { ReasoningVault, hasGatewayReasoning } from './reasoning.js';
 import { upstreamProtocols } from '../shared/upstream-protocols.js';
+import { WebSearch } from '../core/web-search.js';
+import { runWebSearch, searchPolicy } from './web-search.js';
 
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const paths: Record<Protocol, string> = { responses: '/responses', messages: '/messages', chat: '/chat/completions' };
@@ -56,6 +58,7 @@ export async function startGateway(options: GatewayOptions) {
   const handlers = new Set<Promise<void>>();
   const poolRouter = options.poolRouter ?? new PoolRouter();
   const reasoningVault = options.reasoningVault ?? new ReasoningVault();
+  const webSearch = new WebSearch(options.network, options.secrets);
   let address = '';
   const server = createServer((req, res) => {
     const pending = handle(req, res); handlers.add(pending);
@@ -117,9 +120,11 @@ export async function startGateway(options: GatewayOptions) {
       if (input.tools?.length && !model.tools) throw new BridgeError(400, 'tools_unsupported', 'This model does not support tool calls.');
       const supported = upstreamProtocols(connection, model.protocols);
       const upstream = supported.includes(protocol) ? protocol : supported[0]!;
-      const translated = upstream !== protocol || hasGatewayReasoning(input);
+      const searchConfig = config.webSearch;
+      const policy = protocol === 'responses' && searchConfig ? searchPolicy(controlled) : undefined;
+      const translated = upstream !== protocol || hasGatewayReasoning(input) || !!policy;
       const reasoning = reasoningVault.context(reasoningScope(clientId, route), upstream, connection.provider, model.upstreamId);
-      const canonical = translated ? decodeRequest(protocol, controlled, reasoning) : undefined;
+      const canonical = translated ? decodeRequest(protocol, controlled, reasoning, !!policy) : undefined;
       if (canonical && !model.images && canonical.messages.some(m => m.content.some(p => p.type === 'image'))) throw new BridgeError(400, 'images_unsupported', 'This model does not accept images.');
       let payload: any = canonical ? encodeRequest(upstream, canonical, model.upstreamId, reasoning) : { ...controlled, model: model.upstreamId };
       const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
@@ -170,10 +175,35 @@ export async function startGateway(options: GatewayOptions) {
       const destination = new URL(endpoint);
       if (['localhost', '127.0.0.1', '[::1]'].includes(destination.hostname) && destination.port === new URL(address).port) throw new BridgeError(400, 'gateway_loop', 'An upstream connection cannot point back to this gateway.');
       if (upstream === 'chat' && payload.stream) payload.stream_options = { ...payload.stream_options, include_usage: true };
-      const upstreamResponse = await options.network.request(connection, endpoint, { method: 'POST', headers, body: JSON.stringify(payload), signal: controller.signal });
-      firstByte = Math.round(performance.now() - started);
-      if (!upstreamResponse.ok) { poolRouter.rejected(connection.id, upstreamResponse.status, upstreamResponse.headers.get('retry-after')); await upstreamResponse.body?.cancel(); throw new BridgeError(upstreamResponse.status >= 400 && upstreamResponse.status < 500 ? upstreamResponse.status : 502, 'upstream_rejected', `The upstream service returned HTTP ${upstreamResponse.status}. Check account access, limits and model configuration.`); }
-      res.setHeader('x-model-bridge-request-id', requestId);
+      const requestUpstream = async (value: any) => {
+        const response = await options.network.request(connection, endpoint, { method: 'POST', headers, body: JSON.stringify(value), signal: controller.signal });
+        firstByte ??= Math.round(performance.now() - started);
+        if (!response.ok) {
+          poolRouter.rejected(connection.id, response.status, response.headers.get('retry-after'));
+          await response.body?.cancel();
+          throw new BridgeError(response.status >= 400 && response.status < 500 ? response.status : 502, 'upstream_rejected', `The upstream service returned HTTP ${response.status}. Check account access, limits and model configuration.`);
+        }
+        if (!res.headersSent) res.setHeader('x-model-bridge-request-id', requestId);
+        return response;
+      };
+      if (policy && searchConfig && canonical) {
+        const result = await runWebSearch({
+          protocol: upstream, canonical, reasoning, model: selected, upstreamModel: model.upstreamId, policy, payload,
+          assumeSse: connection.auth === 'chatgpt-device', request: requestUpstream,
+          search: (query, domains) => webSearch.search(searchConfig, query, domains, controller.signal),
+          reportUsage: usage => { tokens = { ...usage }; },
+          emit: async event => {
+            if (!input.stream || !event) return;
+            if (!res.headersSent) res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
+            await write(res, event);
+          },
+        });
+        if (input.stream) res.end();
+        else json(res, 200, result);
+        status = 'success';
+        return;
+      }
+      const upstreamResponse = await requestUpstream(payload);
       if (!upstreamResponse.body) throw new BridgeError(502, 'empty_upstream_response', 'The upstream returned an empty response.');
       const contentType = upstreamResponse.headers.get('content-type');
       // ChatGPT's Codex endpoint can stream valid SSE without Content-Type.

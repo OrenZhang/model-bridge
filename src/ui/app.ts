@@ -149,11 +149,31 @@ function localSetup() {
       ? (status.canRestore ? '已接入本机网关' : '已接入本机网关 · 暂无原始配置备份')
       : status?.serviceName ?? '正在读取设置');
     const disabled = clientBusy || !status || status.mode === 'error' || (!connected && !available);
-    return `<div class="local-setup-row"><div><strong>${client.name}</strong><small>${escape(description)}</small></div>
-      ${action ? `<button class="secondary" data-action="${action}" data-id="${client.id}" ${disabled ? 'disabled' : ''}>${label}</button>` : ''}</div>`;
+    const updateSearch = connected && client.id === 'codex' && status.webSearch !== (state.config.webSearch ? 'live' : 'disabled');
+    return `<div class="local-setup-row"><div><strong>${client.name}</strong><small>${escape(description)}</small></div><div class="toolbar-actions">
+      ${updateSearch ? `<button class="secondary" data-action="use-gateway" data-id="codex" ${disabled ? 'disabled' : ''}>更新 Codex 配置</button>` : ''}
+      ${action ? `<button class="secondary" data-action="${action}" data-id="${client.id}" ${disabled ? 'disabled' : ''}>${label}</button>` : ''}</div></div>`;
   }).join('');
   return `<details id="local-setup" class="panel local-setup" ${expanded ? 'open' : ''}>
     <summary>本机接入与恢复</summary>${rows}<p class="hint">配置写入后，在 Codex 或 Claude Code 中选择模型。已打开的客户端可能需要重启。</p></details>`;
+}
+function showSearchSettings() {
+  const form = $<HTMLFormElement>('#search-form');
+  const settings = state.config.webSearch;
+  form.reset();
+  $<HTMLSelectElement>('#search-form [name="provider"]').value = settings?.provider ?? 'off';
+  $<HTMLInputElement>('#search-form [name="baseUrl"]').value = settings?.baseUrl ?? '';
+  $<HTMLInputElement>('#search-form [name="apiKey"]').placeholder = settings?.provider === 'tavily' ? '已保存，留空保留' : '输入 API Key';
+  $('#search-feedback').textContent = '';
+  updateSearchFields();
+  $<HTMLDialogElement>('#search-dialog').showModal();
+}
+function updateSearchFields() {
+  const provider = $<HTMLSelectElement>('#search-form [name="provider"]').value;
+  $('#search-url-field').hidden = provider !== 'searxng';
+  $('#search-key-field').hidden = provider !== 'tavily';
+  $<HTMLInputElement>('#search-form [name="baseUrl"]').required = provider === 'searxng';
+  $<HTMLButtonElement>('#search-test').disabled = !state.config.webSearch;
 }
 
 async function updatePortableConfig(preferLan = false) {
@@ -186,7 +206,7 @@ function render() {
   $('#page-title').textContent = titles[page]!;
   $('#service-status').innerHTML = '<i></i> 本地网关运行中';
   let html = '';
-  if (page === 'overview') html = `<p class="intro">为其他设备提供模型服务，按独立密钥统计用量。</p>${endpointCards()}${localSetup()}${accessKeyPanel()}<div class="section-heading"><h3>复制接入配置</h3><span class="hint">使用下方选中的独立 Key</span></div><div class="panel service-exports"><label>配置使用的密钥<select id="service-key">${(state.accessKeys??[]).filter((k:any)=>k.enabled).map((k:any)=>`<option value="${escape(k.id)}" ${k.id===portableKeyId?'selected':''}>${escape(k.name)}</option>`).join('')}</select></label>${supportedClients.map(c=>`<button class="secondary" data-action="portable-config" data-id="${c.id}" ${(state.accessKeys??[]).some((k:any)=>k.enabled)&&state.modelCatalog?.length?'':'disabled'}>${c.name} 配置与脚本</button>`).join('')}</div>`;
+  if (page === 'overview') html = `<p class="intro">为其他设备提供模型服务，按独立密钥统计用量。</p>${endpointCards()}<div class="section-heading"><h3>联网搜索</h3><button class="secondary" data-action="search-settings">${state.config.webSearch ? "配置搜索" : "设置搜索"}</button></div><p class="hint">${state.config.webSearch ? (state.config.webSearch.provider === "searxng" ? "SearXNG" : "Tavily") + " · 由网关执行" : "搜索服务尚未配置"}</p>${localSetup()}${accessKeyPanel()}<div class="section-heading"><h3>复制接入配置</h3><span class="hint">使用下方选中的独立 Key</span></div><div class="panel service-exports"><label>配置使用的密钥<select id="service-key">${(state.accessKeys??[]).filter((k:any)=>k.enabled).map((k:any)=>`<option value="${escape(k.id)}" ${k.id===portableKeyId?'selected':''}>${escape(k.name)}</option>`).join('')}</select></label>${supportedClients.map(c=>`<button class="secondary" data-action="portable-config" data-id="${c.id}" ${(state.accessKeys??[]).some((k:any)=>k.enabled)&&state.modelCatalog?.length?'':'disabled'}>${c.name} 配置与脚本</button>`).join('')}</div>`;
   if (page === 'connections') html = `<div class="row intro connection-toolbar"><p>${state.config.connections.length} 个连接 · ${new Set(state.config.connections.map((c: any) => c.provider)).size} 个服务商</p><div class="toolbar-actions"><button class="secondary" data-action="manage-networks">代理订阅</button><button class="primary" data-action="add-connection">＋ 添加连接</button></div></div>${connections()}<p class="hint">同模型多账号分摊不同对话，后续消息与工具调用保持在原账号。</p>`;
   if (page === 'models') html = `<p class="intro">这些模型通过同一个网关提供服务。客户端根据各自能力加载模型目录。</p>${modelsTable()}<p class="hint">模型列表不等于调用权限。首次接入请验证实际调用；自定义模型的上下文和能力需要与服务商说明核对。</p>`;
   if (page === 'usage') {
@@ -366,6 +386,13 @@ document.addEventListener('click', event => {
         if (target.dataset.portable === 'export') { if (await call('client.export-portable', payload)) toast('配置包已导出'); }
         else { $('#portable-feedback').textContent = ''; await call('client.copy-portable', { ...payload, part: target.dataset.portable === 'script' ? $<HTMLSelectElement>('#portable-platform').value : target.dataset.portable }); $('#portable-feedback').textContent = target.dataset.portable === 'script' ? '执行脚本已复制，可在目标电脑粘贴运行。' : '配置已复制。'; toast('已复制，配置包含本网关访问密钥'); }
       }
+      if (operation === 'search-settings') showSearchSettings();
+      if (operation === 'search-test') {
+        const feedback = $('#search-feedback');
+        feedback.textContent = '正在测试搜索…';
+        try { feedback.textContent = `连接成功，返回 ${await call('search.test')} 条来源。`; }
+        catch (error: any) { feedback.textContent = error.message; }
+      }
       if (operation === 'use-gateway' || operation === 'use-original') {
         if (clientBusy) return;
         const client = id; clientBusy = true; render();
@@ -446,3 +473,19 @@ void refresh(); setInterval(() => { if (!clientBusy && !connectionSaving && !doc
 export {};
 
 document.addEventListener('submit',event=>{if((event.target as HTMLElement).id!=='access-key-form')return;event.preventDefault();const form=event.target as HTMLFormElement;const button=form.querySelector('button')!;button.disabled=true;const name=String(new FormData(form).get('keyName')??'').trim();void action('access.create',{name},'独立密钥已创建').then(id=>{portableKeyId=id;render();}).catch(()=>{}).finally(()=>{button.disabled=false;});});
+
+$<HTMLSelectElement>('#search-form [name="provider"]').addEventListener('change', updateSearchFields);
+$<HTMLFormElement>('#search-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const data = Object.fromEntries(new FormData(form));
+  const button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  button.disabled = true;
+  void action('search.save', data, '搜索设置已保存').then(() => {
+    const key = $<HTMLInputElement>('#search-form [name="apiKey"]');
+    key.value = '';
+    if (state.config.webSearch?.provider === 'tavily') key.placeholder = '已保存，留空保留';
+    $('#search-feedback').textContent = '已保存。';
+    updateSearchFields();
+  }).catch(() => {}).finally(() => { button.disabled = false; });
+});

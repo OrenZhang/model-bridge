@@ -55,6 +55,11 @@ export const ConnectionSchema = z.object({
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: 'custom', message: 'Model IDs must be unique within a connection.' });
 });
 export type Connection = z.infer<typeof ConnectionSchema>;
+export const SearchConfigSchema = z.discriminatedUnion('provider', [
+  z.object({ provider: z.literal('searxng'), baseUrl: ConnectionSchema.shape.baseUrl }),
+  z.object({ provider: z.literal('tavily'), secretRef: z.string().min(1) }),
+]);
+export type SearchConfig = z.infer<typeof SearchConfigSchema>;
 export const ConfigSchema = z.object({
   deviceId:z.string().uuid().optional(),
   version: z.literal(1).default(1), port: z.number().int().min(0).max(65535).default(18765),
@@ -65,6 +70,7 @@ export const ConfigSchema = z.object({
     credentialRef: z.string().optional(),
   })).default([]),
   connections: z.array(ConnectionSchema).default([]),
+  webSearch: SearchConfigSchema.optional(),
   hiddenModels: z.array(z.string().min(1).max(200)).default([]),
   networkProfiles: z.array(z.object({ id: identifier, name: z.string().min(1).max(100), source: z.enum(['subscription', 'config']), nodes: z.array(z.string()).min(1), selected: z.string(), selectionMode: z.enum(['auto', 'manual']).default('auto'), secretRef: z.string(), updatedAt: z.string() })).default([]),
   clients: z.array(z.object({ id: identifier, name: z.string().min(1), enabled:z.boolean().default(true), tokenHash: z.string().regex(/^[a-f0-9]{64}$/) })).default([]),

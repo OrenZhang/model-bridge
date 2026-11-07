@@ -58,6 +58,17 @@
     <div id="network-core-status"></div><div id="network-profiles"></div>
     <form id="network-form"><h3>添加订阅或本地配置</h3><label>名称<input name="name" required maxlength="100" placeholder="例如：我的订阅" /></label><label>来源<select name="source"><option value="subscription">Clash / Mihomo 订阅地址</option><option value="config">本地 YAML 配置</option></select></label><label id="subscription-field">HTTPS 订阅地址<input name="url" type="password" autocomplete="off" placeholder="订阅地址加密保存在本机" /></label><div id="network-config-fields" hidden><button type="button" class="secondary" data-action="read-network-config">选择配置文件</button><label>配置内容<textarea name="config" rows="5" placeholder="proxies: ..."></textarea></label></div><p class="hint">支持包含节点的 Clash / Mihomo YAML。仅导入节点，订阅中的系统路由、TUN、DNS 和监听设置不会应用。</p><div class="dialog-actions"><button class="primary" type="submit">保存并读取节点</button></div></form>
   </dialog>
+  <dialog id="search-dialog" aria-labelledby="search-title">
+    <form id="search-form">
+      <div class="dialog-title"><h2 id="search-title">联网搜索</h2><button class="icon-button" type="button" data-close="search-dialog">×</button></div>
+      <label>搜索服务<select name="provider"><option value="off">关闭</option><option value="searxng">SearXNG</option><option value="tavily">Tavily</option></select></label>
+      <label id="search-url-field">SearXNG 基础地址<input name="baseUrl" type="url" placeholder="http://127.0.0.1:8888" /><small>在实例的 search.formats 中启用 JSON。</small></label>
+      <label id="search-key-field">Tavily API Key<input name="apiKey" type="password" autocomplete="off" /></label>
+      <p class="hint">已接入的 Codex 可在「本机接入与恢复」中更新配置，重启后生效。</p>
+      <p id="search-feedback" class="hint" role="status"></p>
+      <div class="dialog-actions"><button id="search-test" class="secondary" type="button" data-action="search-test">测试已保存的服务</button><button class="primary" type="submit">保存</button></div>
+    </form>
+  </dialog>
   <dialog id="portable-dialog" class="portable-dialog">
     <div class="dialog-title"><h2>复制接入配置</h2><button class="icon-button" data-close="portable-dialog">×</button></div>
     <div class="portable-network"><label for="portable-key">访问密钥</label><select id="portable-key" aria-label="导出配置使用的密钥"></select></div><div class="portable-network"><label for="portable-address">服务地址</label><select id="portable-address" aria-label="配置中的服务地址"></select></div>
