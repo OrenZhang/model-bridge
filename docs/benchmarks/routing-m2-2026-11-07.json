@@ -1,0 +1,139 @@
+{
+  "createdAt": "2026-11-07T02:26:31.345Z",
+  "runtime": "v22.22.2",
+  "platform": "darwin",
+  "arch": "arm64",
+  "cpus": "Apple M2",
+  "synthetic": true,
+  "notes": "Routing includes queued selection and atomic file replacement where durable=true. Conversion excludes response/SSE handling. Neither includes provider, HTTP, LAN or search latency; results are not an end-to-end SLA.",
+  "results": [
+    {
+      "kind": "routing-only",
+      "durable": false,
+      "existingBindings": 0,
+      "concurrency": 1,
+      "samples": 128,
+      "milliseconds": {
+        "p50": 0.047,
+        "p95": 0.082,
+        "p99": 0.448
+      },
+      "operationsPerSecond": 8585.7
+    },
+    {
+      "kind": "routing-only",
+      "durable": false,
+      "existingBindings": 0,
+      "concurrency": 16,
+      "samples": 128,
+      "milliseconds": {
+        "p50": 0.346,
+        "p95": 0.855,
+        "p99": 1.059
+      },
+      "operationsPerSecond": 22335.2
+    },
+    {
+      "kind": "routing-only",
+      "durable": true,
+      "existingBindings": 0,
+      "concurrency": 1,
+      "samples": 128,
+      "milliseconds": {
+        "p50": 0.316,
+        "p95": 0.41,
+        "p99": 0.529
+      },
+      "operationsPerSecond": 3008.8
+    },
+    {
+      "kind": "routing-only",
+      "durable": true,
+      "existingBindings": 0,
+      "concurrency": 16,
+      "samples": 128,
+      "milliseconds": {
+        "p50": 2.515,
+        "p95": 5.04,
+        "p99": 5.648
+      },
+      "operationsPerSecond": 3273.4
+    },
+    {
+      "kind": "routing-only",
+      "durable": true,
+      "existingBindings": 1000,
+      "concurrency": 1,
+      "samples": 128,
+      "milliseconds": {
+        "p50": 1.062,
+        "p95": 1.43,
+        "p99": 1.751
+      },
+      "operationsPerSecond": 906.9
+    },
+    {
+      "kind": "routing-only",
+      "durable": true,
+      "existingBindings": 1000,
+      "concurrency": 16,
+      "samples": 128,
+      "milliseconds": {
+        "p50": 9.621,
+        "p95": 17.807,
+        "p99": 18.514
+      },
+      "operationsPerSecond": 904.6
+    },
+    {
+      "kind": "routing-only",
+      "durable": true,
+      "existingBindings": 5000,
+      "concurrency": 1,
+      "samples": 128,
+      "milliseconds": {
+        "p50": 5.6,
+        "p95": 7.094,
+        "p99": 7.697
+      },
+      "operationsPerSecond": 173.1
+    },
+    {
+      "kind": "routing-only",
+      "durable": true,
+      "existingBindings": 5000,
+      "concurrency": 16,
+      "samples": 128,
+      "milliseconds": {
+        "p50": 45.044,
+        "p95": 83.101,
+        "p99": 88.381
+      },
+      "operationsPerSecond": 188.9
+    },
+    {
+      "kind": "request-conversion-only",
+      "source": "responses",
+      "target": "chat",
+      "inputBytes": 24807,
+      "samples": 500,
+      "milliseconds": {
+        "p50": 0.077,
+        "p95": 0.085,
+        "p99": 0.11
+      }
+    },
+    {
+      "kind": "request-conversion-only",
+      "source": "responses",
+      "target": "messages",
+      "inputBytes": 24807,
+      "samples": 500,
+      "milliseconds": {
+        "p50": 0.073,
+        "p95": 0.079,
+        "p99": 0.103
+      }
+    }
+  ]
+}

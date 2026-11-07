@@ -1,5 +1,6 @@
 import { publicModelRoutes } from './model-pool.js';
 import { type Config } from './config.js';
+import { upstreamProtocols } from '../shared/upstream-protocols.js';
 
 const instructions = 'You are a coding assistant. Follow the user and developer instructions. Inspect relevant files before changing them. Use the provided tools and report results accurately.';
 export function models(config: Config) {
@@ -20,7 +21,7 @@ export function openaiCatalog(config: Config) {
   return { object: 'list', data: models(config).map(({ connection, model, id, displayName }) => ({ id, object: 'model', created: 0, owned_by: connection.provider, display_name: displayName })) };
 }
 export function codexCatalog(config: Config) {
-  return { models: models(config).filter(({ model }) => model.tools).map(({ connection, model, id, displayName }, priority) => ({
+  return { models: models(config).filter(({ model }) => model.tools).map(({ connection, model, id, displayName, members }, priority) => ({
     slug: id, display_name: displayName, description: `Via ${connection.name}`,
     default_reasoning_level: model.reasoning[0] ?? null,
     supported_reasoning_levels: model.reasoning.map(effort => ({ effort, description: effort })),
@@ -33,7 +34,8 @@ export function codexCatalog(config: Config) {
     context_window: model.contextWindow, max_context_window: model.contextWindow,
     effective_context_window_percent: 95, experimental_supported_tools: [],
     input_modalities: model.images ? ['text', 'image'] : ['text'],
-    supports_search_tool: false, supports_image_detail_original: false,
+    // This enables client tool discovery, not OpenAI-hosted web search.
+    supports_search_tool: members.every(({connection,model})=>connection.auth==='chatgpt-device'||!upstreamProtocols(connection,model.protocols).includes('responses')), supports_image_detail_original: false,
   })) };
 }
 export function anthropicCatalog(config: Config) {

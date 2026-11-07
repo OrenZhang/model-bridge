@@ -66,7 +66,9 @@ jobs:
         if: runner.os != 'Linux'
         run: npx electron scripts/validate-update-network.cjs
       - name: Verify Codex integration
-        run: node scripts/validate-codex-providers.mjs --mock-pools
+        run: |
+          node scripts/validate-codex-providers.mjs --mock-pools
+          node scripts/validate-codex-providers.mjs --mock-pools --discovery-probe
       - name: Build installers and update metadata
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
         env:

@@ -17,6 +17,25 @@ function nextRequest(protocol: Protocol, response: any) {
   return { messages: [{ role: 'user', content: 'question' }, { role: 'assistant', content: response.content }, { role: 'user', content: ['one','two'].map(id => ({ type: 'tool_result', tool_use_id: id, content: id + ' result' })) }], tools: [{ name: tool.name, input_schema: tool.parameters }] };
 }
 describe('thinking roundtrip across protocols', () => {
+  it('accepts null reasoning placeholders in DeepSeek stream deltas',()=>{
+    const decoder=new UpstreamDecoder('chat');
+    expect(decoder.decode(JSON.stringify({choices:[{delta:{reasoning_content:null,content:'answer'}}]}))).toEqual([{kind:'text',text:'answer'}]);
+    expect(decoder.decode(JSON.stringify({choices:[{delta:{reasoning_content:'real thinking'}}]}))[0]).toMatchObject({kind:'reasoning',record:{value:{reasoning_content:'real thinking'}}});
+  });
+  it.each(['chat','messages'] as const)('round-trips client tool discovery and loaded schemas through %s',upstream=>{
+    const declaration={type:'tool_search',execution:'client',description:'Discover client tools',parameters:{type:'object',properties:{query:{type:'string'}},required:['query']}};
+    const canonical=decodeRequest('responses',{input:'discover a tool',tools:[declaration],tool_choice:{type:'tool_search'}});
+    const first=encodeRequest(upstream,canonical,'vendor-model');expect(JSON.stringify(first.tool_choice)).toContain('mb_client_tool_search');
+    const encoder=new DownstreamEncoder('responses','vendor-model',canonical.tools);
+    encoder.accept({kind:'tool',index:0,id:'discovery_1',name:'mb_client_tool_search'});encoder.accept({kind:'args',index:0,text:'{"query":"lookup"}'});
+    const output=encoder.result().output;expect(output[0]).toMatchObject({type:'tool_search_call',execution:'client',call_id:'discovery_1',arguments:{query:'lookup'}});
+    const loaded={type:'function',name:'lookup',parameters:{type:'object',properties:{key:{type:'string'}}}};
+    const next=encodeRequest(upstream,decodeRequest('responses',{tools:[declaration],input:[{role:'user',content:'discover a tool'},...output,{type:'tool_search_output',execution:'client',call_id:'discovery_1',tools:[loaded]}]}),'vendor-model');
+    expect(next.tools.map((t:any)=>t.function?.name??t.name)).toEqual(['mb_client_tool_search','lookup']);
+    if(upstream==='chat')expect(next.messages.at(-1)).toMatchObject({role:'tool',tool_call_id:'discovery_1'});
+    else expect(next.messages.at(-1).content[0]).toMatchObject({type:'tool_result',tool_use_id:'discovery_1'});
+    expect(JSON.stringify(next.messages)).toContain('lookup');
+  });
   for (const upstream of ['responses','messages','chat'] as const) for (const downstream of ['responses','messages','chat'] as const) if (upstream !== downstream) {
     it(`${upstream} → ${downstream} → ${upstream} preserves opaque history and parallel tool results`, () => {
       const context = vault.context('client-a/connection/model', upstream);

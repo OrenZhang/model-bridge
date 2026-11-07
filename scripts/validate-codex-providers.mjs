@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { publicModelRoutes } from '../dist/core/model-pool.js';
-/** Real Codex 0.144.1 app-server integration, with isolated credentials and fixtures.
+/** Real bundled Codex app-server integration, with isolated credentials and fixtures.
  * Run after npm run build using Node >=22.19:
  *   node scripts/validate-codex-providers.mjs --mock
+ *   node scripts/validate-codex-providers.mjs --mock-pools --discovery-probe
  *   MODEL_BRIDGE_TEST_GATEWAY_URL=http://127.0.0.1:18765 MODEL_BRIDGE_TEST_GATEWAY_KEY=... node scripts/validate-codex-providers.mjs
  * MODEL_BRIDGE_TEST_ROUTE_METADATA is JSON keyed by route ID, each value containing
  * upstreamHost, upstreamModel and upstreamProtocol (chat or messages). A caller
@@ -13,7 +14,7 @@ import { publicModelRoutes } from '../dist/core/model-pool.js';
  * Protocol: https://learn.chatgpt.com/docs/app-server
  */
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
@@ -28,6 +29,8 @@ import { startGateway, tokenHash } from '../dist/gateway/server.js';
 import { SSEDecoder, sse } from '../dist/gateway/sse.js';
 
 const thinkingProbe = process.argv.includes('--thinking-probe');
+const searchProbe = process.argv.includes('--search-probe');
+const discoveryProbe = process.argv.includes('--discovery-probe');
 const mockPools = process.argv.includes('--mock-pools');
 const mock = process.argv.includes('--mock') || mockPools;
 const root = await mkdtemp(path.join(os.tmpdir(), 'model-bridge-codex-validation-'));
@@ -40,7 +43,7 @@ const nonce = () => randomBytes(10).toString('hex');
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 async function body(req) { const parts = []; for await (const part of req) parts.push(part); return Buffer.concat(parts).toString(); }
 async function listen(handler) {
-  const server = createServer((req, res) => void Promise.resolve(handler(req, res)).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); }));
+  const server = createServer((req, res) => void Promise.resolve(handler(req, res)).catch(error => { if(mock)process.stderr.write('Mock fixture: '+error.message+'\n');if (!res.headersSent) res.writeHead(500); res.end(); }));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   cleanup.push(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
   return `http://127.0.0.1:${server.address().port}`;
@@ -53,11 +56,12 @@ async function simulatedUpstream() {
     const input = JSON.parse(await body(req));
     const isMessages = req.url.endsWith('/messages');
     const provider = isMessages ? 'minimax' : 'kimi';
-    const step = (steps.get(provider) ?? 0) + 1; steps.set(provider, step);
+    const requestStep = (steps.get(provider) ?? 0) + 1; steps.set(provider, requestStep);
+    const step = requestStep - (discoveryProbe ? 2 : 0);
     const serialized = JSON.stringify(input.messages);
     const toolResults = isMessages ? input.messages.flatMap(m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'tool_result') : []) : input.messages.filter(m => m.role === 'tool');
     const thinking = 'Synthetic reasoning fixture. Preserve this history for tool continuation.';
-    if (step > 1) {
+    if (requestStep > 1) {
       const signed = isMessages ? input.messages.some(m => m.role === 'assistant' && Array.isArray(m.content) && m.content.some(b => b.type === 'thinking' && b.thinking === thinking && b.signature === 'fixture_signature_v1')) : input.messages.some(m => m.role === 'assistant' && m.reasoning_content === thinking);
       if (!signed || !toolResults.length) { json(res, 400, { error: { message: 'Missing intact thinking or tool-result history.' } }); return; }
       replayChecks[provider]++;
@@ -65,7 +69,11 @@ async function simulatedUpstream() {
     const tool = input.tools.find(t => (t.function?.name ?? t.name).endsWith('bridge_probe'));
     assert(tool, 'Mock upstream did not receive bridge_probe.');
     const name = tool.function?.name ?? tool.name;
-    const calls = step === 1 ? [{ id: 'call_init', name, args: { operation: 'write', slot: 'a' } }] : step === 3 ? ['a', 'b'].map(slot => ({ id: `call_read_${slot}`, name, args: { operation: 'read', slot } })) : [];
+    const discovery = input.tools.find(t => (t.function?.name ?? t.name)==='mb_client_tool_search');
+    if(discoveryProbe) assert(discovery,'Mock upstream did not receive tool discovery. Available: '+input.tools.map(t=>t.function?.name??t.name).join(','));
+    const loaded = input.tools.find(t=>(t.function?.description??t.description)?.includes('Synthetic deferred probe fixture'));
+    if(discoveryProbe&&step===0) assert(loaded,'Codex did not load the discovered namespace tool.');
+    const calls = step === -1 ? [{id:'call_discovery',name:'mb_client_tool_search',args:{limit:1,query:'synthetic probe fixture'}}] : step === 0 ? [{id:'call_loaded',name:loaded.function?.name??loaded.name,args:{}}] : step === 1 ? [{ id: 'call_init', name, args: { operation: 'write', slot: 'a' } }] : step === 3 ? ['a', 'b'].map(slot => ({ id: `call_read_${slot}`, name, args: { operation: 'read', slot } })) : [];
     const markers = [...new Set(serialized.match(/marker-[a-f0-9]+/g) ?? [])];
     const receipts = [...new Set(serialized.match(/receipt-[a-f0-9]+/g) ?? [])];
     const text = [...markers, ...receipts].join(' ');
@@ -129,11 +137,15 @@ async function observeGateway(gateway, route, metrics) {
       const request = JSON.parse(raw);
       assert(request.model === route, 'Unexpected model route.');
       metrics.requests++;
+      const countSearch = tools => (tools ?? []).reduce((count,tool)=>count + (String(tool.type).startsWith('web_search') ? 1 : tool.type==='namespace' ? countSearch(tool.tools) : 0),0);
+      metrics.hostedSearchDeclarations = (metrics.hostedSearchDeclarations ?? 0) + countSearch(request.tools);
+      if (searchProbe && !countSearch(request.tools)) throw new Error('Codex did not emit the hosted search declaration being tested.');
       if (metrics.requests > 12) { json(res, 429, { error: { message: 'Validation request budget reached.' } }); return; }
       for (const item of Array.isArray(request.input) ? request.input : []) {
         if (item.type === 'reasoning' && item.encrypted_content?.startsWith('mb_r1.')) metrics.encryptedReasoningReplayed++;
         if (item.type === 'reasoning' && item.encrypted_content && !item.encrypted_content.startsWith('mb_r1.')) metrics.nativeReasoningReplayed++;
         if (item.type === 'function_call_output') metrics.toolResultsReplayed++;
+        if (item.type === 'tool_search_output') {metrics.discoveryResultsReplayed=(metrics.discoveryResultsReplayed??0)+1;metrics.discoveryToolDefinitionsReplayed=(metrics.discoveryToolDefinitionsReplayed??0)+(item.tools?.length??0);}
       }
     }
     const upstream = await fetch(gateway.url + req.url, { method: req.method, headers: { 'content-type': 'application/json', authorization: `Bearer ${gateway.key}`, ...(typeof req.headers.session_id === 'string' ? { session_id: req.headers.session_id } : {}) }, ...(raw ? { body: raw } : {}), signal: AbortSignal.timeout(120000) });
@@ -142,6 +154,7 @@ async function observeGateway(gateway, route, metrics) {
     const parser = new SSEDecoder(({ data }) => {
       if (data === '[DONE]') return;
       let value; try { value = JSON.parse(data); } catch { return; }
+      if(value.error) metrics.streamError={type:value.error.type,code:value.error.code,message:String(value.error.message).replaceAll(gateway.key,'[redacted]').slice(0,300)};
       if (value.type === 'response.output_item.done' && value.item?.type === 'reasoning' && value.item.encrypted_content?.startsWith('mb_r1.')) metrics.encryptedReasoningReceived++;
       if (value.type === 'response.output_item.done' && value.item?.type === 'reasoning' && value.item.encrypted_content && !value.item.encrypted_content.startsWith('mb_r1.')) metrics.nativeReasoningReceived++;
       if (value.type === 'response.completed' && value.response?.usage) {
@@ -164,12 +177,14 @@ async function validateProvider(gateway, provider, route, catalog) {
   await mkdir(codexHome, { recursive: true, mode: 0o700 }); await mkdir(workspace, { recursive: true, mode: 0o700 });
   const address = await observeGateway(gateway, route, metrics);
   const catalogFile = path.join(codexHome, 'codex-models.json');
-  await writeFile(catalogFile, JSON.stringify(catalog), { mode: 0o600 });
-  await writeFile(path.join(codexHome, 'config.toml'), toml({ web_search: 'disabled', model_provider: 'model_bridge', model: route, model_catalog_json: catalogFile, model_providers: { model_bridge: { name: 'Model Bridge isolated validation', base_url: address + '/v1', wire_api: 'responses', requires_openai_auth: false, supports_websockets: false, experimental_bearer_token: gateway.key, request_max_retries: 0, stream_max_retries: 0 } } }), { mode: 0o600 });
+  await writeFile(catalogFile, JSON.stringify(searchProbe ? {...catalog,models:catalog.models.map(m=>({...m,supports_search_tool:true}))} : catalog), { mode: 0o600 });
+  await writeFile(path.join(codexHome, 'config.toml'), toml({ web_search: searchProbe ? 'live' : 'disabled', model_provider: 'model_bridge', model: route, model_catalog_json: catalogFile, model_providers: { model_bridge: { name: 'Model Bridge isolated validation', base_url: address + '/v1', wire_api: 'responses', requires_openai_auth: false, supports_websockets: false, experimental_bearer_token: gateway.key, request_max_retries: 0, stream_max_retries: 0 } } }), { mode: 0o600 });
   const env = { ...process.env, CODEX_HOME: codexHome };
   for (const key of ['OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'OPENAI_BASE_URL', 'OPENAI_IDENTITY_TOKEN_FILE', 'MODEL_BRIDGE_TEST_GATEWAY_KEY', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[key];
   env.NO_PROXY = 'localhost,127.0.0.1,::1'; env.no_proxy = env.NO_PROXY;
-  const child = spawn(process.env.MODEL_BRIDGE_VALIDATION_CODEX_BINARY || codexBinary(), ['app-server', '--listen', 'stdio://'], { env, cwd: workspace, stdio: 'pipe', windowsHide: true });
+  const binary = process.env.MODEL_BRIDGE_VALIDATION_CODEX_BINARY || codexBinary();
+  metrics.codexVersion=execFileSync(binary,['--version'],{encoding:'utf8'}).trim();
+  const child = spawn(binary, ['app-server', '--listen', 'stdio://'], { env, cwd: workspace, stdio: 'pipe', windowsHide: true });
   // Register immediately: exit can precede stdio closure, and close may occur
   // before validation reaches finally (including when spawning fails).
   const childClosed = new Promise(resolve => child.once('close', resolve));
@@ -186,6 +201,9 @@ async function validateProvider(gateway, provider, route, catalog) {
   lines.on('line', line => { void (async () => {
     const message = JSON.parse(line);
     if (message.method && message.id !== undefined) {
+      if(discoveryProbe&&message.method==='item/tool/call'&&message.params.namespace==='bridge_fixture'&&message.params.tool==='lookup'){
+        metrics.loadedToolCalls=(metrics.loadedToolCalls??0)+1;send({id:message.id,result:{success:true,contentItems:[{type:'inputText',text:'Synthetic deferred tool executed.'}]}});return;
+      }
       if (message.method !== 'item/tool/call' || message.params.tool !== 'bridge_probe') { send({ id: message.id, error: { code: -32601, message: 'Only the synthetic bridge_probe tool is allowed.' } }); return; }
       const args = message.params.arguments;
       assert(['write', 'read'].includes(args.operation) && ['a', 'b'].includes(args.slot), 'Unexpected probe arguments.');
@@ -203,7 +221,7 @@ async function validateProvider(gateway, provider, route, catalog) {
   })().catch(error => currentTurn?.reject(error)); });
   try {
     await rpc('initialize', { clientInfo: { name: 'model_bridge_validation', version: '0.1.0' }, capabilities: { experimentalApi: true } }); send({ method: 'initialized' });
-    const { thread } = await rpc('thread/start', { model: route, modelProvider: 'model_bridge', cwd: workspace, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true, baseInstructions: 'This is an isolated synthetic integration test. Follow the user exactly. Use only bridge_probe for tools. Never run shell commands or access any other file. Keep final answers under 80 words.', dynamicTools: [{ type: 'function', name: 'bridge_probe', description: 'Write or read a synthetic fixture. The write operation generates a receipt which is only available from this tool. No arbitrary file access.', inputSchema: { type: 'object', properties: { operation: { type: 'string', enum: ['write', 'read'] }, slot: { type: 'string', enum: ['a', 'b'] } }, required: ['operation', 'slot'], additionalProperties: false } }] });
+    const { thread } = await rpc('thread/start', { model: route, modelProvider: 'model_bridge', cwd: workspace, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true, baseInstructions: 'This is an isolated synthetic integration test. Follow the user exactly. Use only bridge_probe for tools. Never run shell commands or access any other file. Keep final answers under 80 words.', dynamicTools: [{ type: 'function', name: 'bridge_probe', description: 'Write or read a synthetic fixture. The write operation generates a receipt which is only available from this tool. No arbitrary file access.', inputSchema: { type: 'object', properties: { operation: { type: 'string', enum: ['write', 'read'] }, slot: { type: 'string', enum: ['a', 'b'] } }, required: ['operation', 'slot'], additionalProperties: false } }, ...(discoveryProbe ? [{ type: 'namespace', name: 'bridge_fixture', description: 'Synthetic deferred probe tools.', tools: [{ type: 'function', name: 'lookup', description: 'Synthetic deferred probe fixture used only to validate tool discovery.', deferLoading: true, inputSchema: { type: 'object', properties: {} } }] }] : [])] });
     const prompts = [
       `[MB_TURN_1] Remember ${marker}. Call bridge_probe with operation write and slot a, then reply with the marker and exact receipt returned by the tool.`,
       '[MB_TURN_2] Call bridge_probe twice with operation read, once slot a and once slot b. You may run these together. Verify both receipts agree and reply with the original marker and receipt.',
@@ -229,6 +247,7 @@ async function validateProvider(gateway, provider, route, catalog) {
     if (metadata.upstreamProtocol !== 'responses') assert(metrics.encryptedReasoningReceived > 0 && metrics.encryptedReasoningReplayed > 0, 'Opaque reasoning did not round-trip through the real Codex client.');
     assert(metrics.toolResultsReplayed >= 3, 'Codex did not replay all tool outputs.');
     if (mock) { metrics.upstreamThinkingReplayChecks = gateway.replayChecks[provider]; assert(metrics.upstreamThinkingReplayChecks >= 4, 'Original thinking/signatures were not restored upstream.'); }
+    if(discoveryProbe) assert(metrics.discoveryResultsReplayed>0&&metrics.discoveryToolDefinitionsReplayed>0&&metrics.loadedToolCalls>0,'Codex did not execute discovery and the loaded namespace tool.');
     metrics.status = 'passed';
   } catch (error) {
     // Gateway and Codex errors contain only synthetic prompts, but cap the report.
@@ -261,7 +280,7 @@ try {
 } catch (error) { results.push({ status: 'blocked', error: String(error.message).slice(0, 500) }); }
 finally {
   for (const result of results.filter(result => result.status === 'blocked')) process.stdout.write(JSON.stringify(result) + '\n');
-  const report = { createdAt: new Date().toISOString(), mockUpstream: mock, modelPools: mockPools, codexVersion: '0.144.1', results };
+  const report = { createdAt: new Date().toISOString(), mockUpstream: mock, modelPools: mockPools, codexVersion: results.find(r=>r.codexVersion)?.codexVersion ?? 'unknown', results };
   if (reportFile) { await mkdir(path.dirname(reportFile), { recursive: true, mode: 0o700 }); await writeFile(reportFile, JSON.stringify(report, null, 2) + '\n', { mode: 0o600 }); }
   const cleanupErrors = [];
   for (const close of cleanup.reverse()) {

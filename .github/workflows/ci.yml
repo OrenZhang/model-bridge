@@ -25,7 +25,9 @@ jobs:
       - run: npm test -- --maxWorkers=2
       - run: npm run build
       - name: Verify real Codex with simulated providers
-        run: node scripts/validate-codex-providers.mjs --mock-pools
+        run: |
+          node scripts/validate-codex-providers.mjs --mock-pools
+          node scripts/validate-codex-providers.mjs --mock-pools --discovery-probe
       - name: Check desktop packaging
         run: npx electron-builder --dir --${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }} --publish never
         env:

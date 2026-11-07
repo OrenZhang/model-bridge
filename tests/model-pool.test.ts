@@ -6,6 +6,7 @@ import { ConfigSchema } from '../src/core/config.js';
 import { catalogRoutes, modelGroups, reasoningScope } from '../src/core/model-pool.js';
 import { PoolRouter } from '../src/gateway/pool-router.js';
 import { ReasoningVault } from '../src/gateway/reasoning.js';
+import { codexCatalog } from '../src/core/catalog.js';
 const directories: string[] = [];
 afterEach(async () => { for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true }); });
 function config() { return ConfigSchema.parse({ connections: ['a', 'b'].map(id => ({ id, name: id, provider: 'kimi', auth: 'none', baseUrl: 'https://same.invalid/v1', models: [{ id: 'local', name: 'Same model', upstreamId: 'same', protocols: ['chat'] }] })) }); }
@@ -17,6 +18,10 @@ it('groups only compatible accounts; never double weights the same verified iden
   c.connections[1]!.baseUrl = c.connections[0]!.baseUrl; c.connections.forEach(c => { c.accountId = 'same-workspace'; c.accountEmail = 'same@example.invalid'; });
   expect(catalogRoutes(c)[0]!.accounts).toBe(1);
   c.connections[1]!.accountEmail='another@example.invalid'; expect(catalogRoutes(c)[0]!.accounts).toBe(2);
+});
+it('advertises client discovery for translated channels but not unknown native Responses implementations',()=>{
+  const c=config();expect(codexCatalog(c).models[0]!.supports_search_tool).toBe(true);
+  c.connections[1]!.upstreamProtocols=['responses'];expect(codexCatalog(c).models[0]!.supports_search_tool).toBe(false);
 });
 it('round robins concurrent independent conversations and pins their continuations', async () => {
   const { id, candidates, vault } = fixture(); const router = new PoolRouter();
@@ -51,6 +56,10 @@ it('keeps pinned accounts on rate limits and excludes unavailable accounts for n
   await expect(router.select(id,candidates,{input:'one'},'client','responses',vault,'one')).rejects.toMatchObject({code:'pool_account_cooling_down'});
   router.rejected('b',401);
   await expect(router.select(id,candidates,{input:'three'},'client','responses',vault,'three')).rejects.toMatchObject({code:'pool_accounts_cooling_down'});
+});
+it.each(['tool_search_call','tool_search_output','web_search_call'])('does not treat unbound %s history as a new conversation',async type=>{
+  const {id,candidates,vault}=fixture();
+  await expect(new PoolRouter().select(id,candidates,{input:[{role:'user',content:'old question'},{type,call_id:'original-call'}]},'client','responses',vault,'unknown-session')).rejects.toMatchObject({code:'pool_history_unbound'});
 });
 it('separates client affinity and rejects changed account identities', async () => {
   const {id,candidates,vault}=fixture(); const router=new PoolRouter();

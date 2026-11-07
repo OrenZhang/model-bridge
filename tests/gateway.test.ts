@@ -61,6 +61,36 @@ function input(protocol: Protocol, streaming = true, tool = false) {
 async function send(address: string, protocol: Protocol, payload: any) { return fetch(address + endpoint[protocol], { method: 'POST', headers: { authorization: 'Bearer gateway-test-key', 'content-type': 'application/json' }, body: JSON.stringify(payload) }); }
 
 describe('gateway protocol matrix', () => {
+  it.each([['chat',false],['chat',true],['messages',false],['messages',true]] as const)('does not silently discard hosted web_search without an executor (%s, stream=%s)',async(upstream,streaming)=>{
+    const {gateway,requests}=await setup(upstream);
+    const r=await send(gateway.address,'responses',{...input('responses',streaming),tools:[{type:'web_search'},{type:'function',name:'web_search',parameters:{type:'object',properties:{}}}]});
+    expect(r.status).toBe(400);expect((await r.json()).error.code).toBe('hosted_search_unavailable');expect(requests).toHaveLength(0);
+  });
+  it('rejects forced hosted search and search history without calling the upstream',async()=>{
+    const {gateway,requests}=await setup('chat');
+    for(const extra of[{tools:[{type:'web_search'}],tool_choice:{type:'web_search'}},{tools:[{type:'web_search_preview'}],tool_choice:'required'},{input:[{type:'web_search_call',id:'ws_1',status:'completed',action:{type:'search',query:'test'}}]}]){
+      const r=await send(gateway.address,'responses',{...input('responses',false),...extra});expect(r.status).toBe(400);expect((await r.json()).error.code).toBe('hosted_search_unavailable');
+    }
+    expect(requests).toHaveLength(0);
+  });
+  it('keeps hosted search intact on a native Responses route',async()=>{
+    const {gateway,requests}=await setup('responses');const r=await send(gateway.address,'responses',{...input('responses'),tools:[{type:'web_search'}]});expect(r.status).toBe(200);await r.text();expect(requests[0]!.body.tools).toEqual([{type:'web_search'}]);expect(r.headers.has('x-model-bridge-unavailable-tools')).toBe(false);
+  });
+  it('handles the Codex client tool_search declaration without discarding eagerly supplied functions',async()=>{
+    const {gateway,requests}=await setup('chat');const r=await send(gateway.address,'responses',{...input('responses',false),tools:[{type:'tool_search',execution:'client',parameters:{type:'object',properties:{}}},{type:'function',name:'read_file',parameters:{type:'object',properties:{}}}]});
+    expect(r.status).toBe(200);await r.text();expect(requests[0]!.body.tools.map((t:any)=>t.function.name)).toEqual(['mb_client_tool_search','read_file']);
+  });
+  it('preserves an ordinary client function named web_search',async()=>{
+    const {gateway,requests}=await setup('chat');const r=await send(gateway.address,'responses',{...input('responses',false),tools:[{type:'function',name:'web_search',parameters:{type:'object',properties:{}}}]});
+    expect(r.status).toBe(200);await r.text();expect(requests[0]!.body.tools[0].function.name).toBe('web_search');
+  });
+  it('rejects missing and server-executed dynamic discovery before contacting the upstream',async()=>{
+    const {gateway,requests}=await setup('chat');
+    for(const extra of[{tool_choice:{type:'tool_search'}},{input:[{type:'tool_search_output',execution:'server',call_id:'discovery_1',tools:[]}]}]){
+      const r=await send(gateway.address,'responses',{...input('responses',false),...extra});expect(r.status).toBe(400);expect((await r.json()).error.code).toBe('tool_discovery_unavailable');
+    }
+    expect(requests).toHaveLength(0);
+  });
   it('prefers Responses when included in multiple upstream protocols without changing the requested model',async()=>{
     const {gateway,config,requests}=await setup('responses');
     config.connections[0]!.upstreamProtocols=['chat','responses'];config.connections[0]!.models[0]!.protocols=['chat'];

@@ -8,9 +8,13 @@ type Part = { type: 'text'; text: string } | { type: 'image'; url: string };
 type Call = { id: string; name: string; arguments: string };
 type Segment = { kind: 'part'; value: Part } | { kind: 'call'; value: Call } | { kind: 'reasoning'; value: ReasoningRecord };
 type Message = { role: 'user' | 'assistant' | 'tool'; content: Part[]; calls?: Call[]; callId?: string; segments?: Segment[]; reasoning?: ReasoningRecord[] };
-type Tool = { name: string; original: string; namespace?: string; custom: boolean; description: string; schema: any };
+type Tool = { name: string; original: string; namespace?: string; custom: boolean; discovery?: boolean; description: string; schema: any };
 export type Delta = { kind: 'reasoning'; index: number; record: ReasoningRecord } | { kind: 'block_end'; index: number } | { kind: 'text'; text: string; index?: number } | { kind: 'tool'; index: number; id: string; name: string } | { kind: 'args'; index: number; text: string } | { kind: 'usage'; tokens: Tokens } | { kind: 'end'; reason: string };
 export interface Canonical { system: string; messages: Message[]; tools: Tool[]; maxTokens?: number; temperature?: number; effort?: string; thinking?: any; summary?: string; toolChoice?: any; }
+const discoveryName = 'mb_client_tool_search';
+const hostedSearch = (type: unknown) => typeof type === 'string' && /^web_search(?:_preview)?(?:_\d{4}_\d{2}_\d{2})?$/.test(type);
+const searchUnavailable = (): never => { throw new BridgeError(400, 'hosted_search_unavailable', '此连接无法执行 Codex / OpenAI 托管的 web_search。请使用客户端提供的搜索 MCP / 函数工具，或使用支持托管搜索的原生连接；关闭 Codex 联网搜索后请新建对话。'); };
+const discoveryUnavailable = (): never => { throw new BridgeError(400, 'tool_discovery_unavailable', '此连接无法执行动态 tool_search。请由客户端提供完整的函数 / MCP 工具定义，或使用支持工具发现的原生连接。'); };
 const unsupported = (name: string): never => { throw new BridgeError(400, 'unsupported_feature', `This cross-protocol route does not support ${name}. Use a model with the native protocol.`); };
 const string = (value: unknown, field: string): string => { if (typeof value !== 'string') throw new BridgeError(400, 'invalid_request', `Expected a string for ${field}.`); return value; };
 const safeName = (name: string) => /^[\w-]{1,64}$/.test(name) ? name : `mb_${createHash('sha256').update(name).digest('hex').slice(0, 24)}`;
@@ -43,12 +47,14 @@ export function decodeRequest(protocol: Protocol, body: any, context?: Reasoning
   }
   function addTool(t: any, namespace?: string) {
     if (t.type === 'namespace') { for (const child of t.tools ?? []) addTool(child, t.name); return; }
-    const f = t.function ?? t;
-    if (protocol !== 'messages' && !['function', 'custom'].includes(t.type)) unsupported(`tool type ${String(t.type)}`);
+    if (protocol === 'responses' && hostedSearch(t.type)) searchUnavailable();
+    const discovery = protocol === 'responses' && t.type === 'tool_search' && t.execution === 'client';
+    const f = discovery ? { ...t, name: discoveryName } : t.function ?? t;
+    if (protocol !== 'messages' && !discovery && !['function', 'custom'].includes(t.type)) unsupported(`tool type ${String(t.type)}`);
     if (protocol === 'messages' && t.type) unsupported(`server tool ${String(t.type)}`);
     const original = string(f.name, 'tool name');
     const tool: Tool = { name: safeName(namespace ? `${namespace}.${original}` : original), original, namespace,
-      custom: t.type === 'custom', description: f.description ?? '', schema: f.parameters ?? f.input_schema ?? { type: 'object', properties: {} } };
+      custom: t.type === 'custom', ...(discovery ? { discovery: true } : {}), description: f.description ?? '', schema: f.parameters ?? f.input_schema ?? { type: 'object', properties: {} } };
     if (tool.custom) {
       tool.schema = { type: 'object', properties: { input: { type: 'string' } }, required: ['input'], additionalProperties: false };
       if (t.format) tool.description += `\nInput format: ${JSON.stringify(t.format)}`;
@@ -61,7 +67,10 @@ export function decodeRequest(protocol: Protocol, body: any, context?: Reasoning
   if (protocol === 'responses') {
     if (typeof body.input === 'string') result.messages.push({ role: 'user', content: parts(body.input) });
     else if (Array.isArray(body.input)) {
-      for (const item of body.input) if (item.type === 'additional_tools') {
+      for (const item of body.input) if (item.type === 'tool_search_output') {
+        if (item.execution !== 'client' || !Array.isArray(item.tools)) discoveryUnavailable();
+        for (const tool of item.tools) addTool(tool);
+      } else if (item.type === 'additional_tools') {
         if (item.role !== 'developer') unsupported('non-developer additional tools');
         for (const tool of item.tools ?? []) addTool(tool);
       }
@@ -77,6 +86,11 @@ export function decodeRequest(protocol: Protocol, body: any, context?: Reasoning
             arguments: item.type === 'custom_tool_call' ? JSON.stringify({ input: item.input }) : string(item.arguments, 'tool arguments') }] });
         } else if (['function_call_output', 'custom_tool_call_output'].includes(item.type)) result.messages.push({ role: 'tool', callId: string(item.call_id, 'call ID'), content: parts(item.output) });
         else if (item.type === 'reasoning') result.messages.push({ role: 'assistant', content: [], reasoning: [readReasoning({ protocol, value: structuredClone(item) }, item.encrypted_content)] });
+        else if (item.type === 'web_search_call') searchUnavailable();
+        else if (item.type === 'tool_search_call') {
+          if (item.execution !== 'client' || !item.arguments || typeof item.arguments !== 'object' || Array.isArray(item.arguments)) discoveryUnavailable();
+          result.messages.push({role:'assistant',content:[],calls:[{id:string(item.call_id,'call ID'),name:discoveryName,arguments:JSON.stringify(item.arguments)}]});
+        } else if (item.type === 'tool_search_output') result.messages.push({role:'tool',callId:string(item.call_id,'call ID'),content:parts(JSON.stringify({tools:item.tools}))});
         else unsupported(`Responses item ${String(item.type)}`);
       }
     } else throw new BridgeError(400, 'invalid_request', 'Responses input is required.');
@@ -126,6 +140,11 @@ export function decodeRequest(protocol: Protocol, body: any, context?: Reasoning
     } else merged.push({ ...message, segments });
   }
   result.messages = merged;
+  if (protocol === 'responses' && hostedSearch(body.tool_choice?.type)) searchUnavailable();
+  if (protocol === 'responses' && body.tool_choice?.type === 'tool_search') {
+    if(!result.tools.some(t=>t.discovery)) discoveryUnavailable();
+    result.toolChoice={type:'function',name:discoveryName};
+  }
   return result;
 }
 function encodeParts(protocol: Protocol, content: Part[], output = false): any[] {
@@ -150,7 +169,12 @@ export function encodeRequest(protocol: Protocol, request: Canonical, model: str
       body.tool_choice = protocol === 'messages' ? { type: request.toolChoice === 'required' ? 'any' : request.toolChoice } : request.toolChoice;
     else if (request.toolChoice.type === 'auto' || request.toolChoice.type === 'none' || request.toolChoice.type === 'any')
       body.tool_choice = protocol === 'messages' ? request.toolChoice : request.toolChoice.type === 'any' ? 'required' : request.toolChoice.type;
-    else unsupported('forced named tool selection');
+    else if (['function','tool'].includes(request.toolChoice.type)) {
+      const name = request.toolChoice.name ?? request.toolChoice.function?.name;
+      const tool = request.tools.find(t=>t.name===name || t.original===name && t.namespace===request.toolChoice.namespace);
+      if(!tool) throw new BridgeError(400,'invalid_tool_choice','The requested tool is not declared.');
+      body.tool_choice=protocol==='messages'?{type:'tool',name:tool.name}:protocol==='chat'?{type:'function',function:{name:tool.name}}:{type:'function',name:tool.name};
+    } else unsupported('forced named tool selection');
   }
   if (protocol === 'responses') {
     body.store = false; body.instructions = request.system; body.include = ['reasoning.encrypted_content'];
@@ -253,9 +277,9 @@ export class UpstreamDecoder {
     if (usage) { this.tokens = usageTokens(this.protocol, usage, this.tokens); result.push({ kind: 'usage', tokens: this.tokens }); }
     if (this.protocol === 'chat') {
       const choice = event.choices?.[0], delta = choice?.delta;
-      if (delta?.reasoning_content !== undefined || delta?.reasoning_details) {
+      if (delta?.reasoning_content != null || delta?.reasoning_details) {
         const value = this.reasoning.get(-1)?.value ?? {};
-        if (delta.reasoning_content !== undefined) value.reasoning_content = (value.reasoning_content ?? '') + string(delta.reasoning_content, 'reasoning_content');
+        if (delta.reasoning_content != null) value.reasoning_content = (value.reasoning_content ?? '') + string(delta.reasoning_content, 'reasoning_content');
         if (delta.reasoning_details) {
           if (!Array.isArray(delta.reasoning_details)) throw new BridgeError(502, 'invalid_reasoning_state', 'Invalid upstream reasoning details.');
           value.reasoning_details ??= [];
@@ -360,7 +384,7 @@ export class UpstreamDecoder {
 
 type OutputNode = { kind: 'text'; id: string; text: string; index: number } |
   { kind: 'reasoning'; id: string; record: ReasoningRecord; index: number; text: string; size: number; sealed?: string } |
-  { kind: 'call'; id: string; callId: string; name: string; arguments: string; custom: boolean; namespace?: string; index: number };
+  { kind: 'call'; id: string; callId: string; name: string; arguments: string; custom: boolean; discovery?: boolean; namespace?: string; index: number };
 export class DownstreamEncoder {
   readonly id = `mb_${randomUUID().replaceAll('-', '')}`;
   private tokens = unknownTokens(); private nodes: OutputNode[] = [];
@@ -421,7 +445,7 @@ export class DownstreamEncoder {
     if (delta.kind === 'tool') {
       if (this.calls.has(delta.index)) throw new BridgeError(502, 'invalid_tool_stream', 'Duplicate upstream tool index.');
       const spec = this.tools.find(t => t.name === delta.name); if (!spec) throw new BridgeError(502, 'unknown_tool', 'The upstream requested an undeclared tool.');
-      const node: Extract<OutputNode, { kind: 'call' }> = { kind: 'call', id: `fc_${randomUUID().replaceAll('-', '')}`, callId: delta.id, name: spec.original, arguments: '', custom: spec.custom, namespace: spec.namespace, index: this.nodes.length };
+      const node: Extract<OutputNode, { kind: 'call' }> = { kind: 'call', id: `fc_${randomUUID().replaceAll('-', '')}`, callId: delta.id, name: spec.original, arguments: '', custom: spec.custom, discovery: spec.discovery, namespace: spec.namespace, index: this.nodes.length };
       this.calls.set(delta.index, node); this.nodes.push(node);
       if (this.protocol === 'chat') return out + this.chat({ tool_calls: [{ index: delta.index, id: node.callId, type: 'function', function: { name: node.name, arguments: '' } }] });
       if (this.protocol === 'messages') return out;
@@ -431,7 +455,7 @@ export class DownstreamEncoder {
     call.arguments += delta.text; if (call.arguments.length > 2097152) throw new BridgeError(502, 'tool_arguments_too_large', 'Tool arguments exceed the size limit.');
     if (this.protocol === 'chat') return out + this.chat({ tool_calls: [{ index: delta.index, function: { arguments: delta.text } }] });
     if (this.protocol === 'messages') return out;
-    return out + (call.custom ? '' : this.event('response.function_call_arguments.delta', { item_id: call.id, output_index: call.index, delta: delta.text }));
+    return out + (call.custom || call.discovery ? '' : this.event('response.function_call_arguments.delta', { item_id: call.id, output_index: call.index, delta: delta.text }));
   }
   // Messages blocks must close in order, with their final signature before stop.
   // Chat has no block boundaries and can send reasoning metadata last, so its
@@ -453,6 +477,7 @@ export class DownstreamEncoder {
   }
   private sealed(node: Extract<OutputNode, { kind: 'reasoning' }>) { return node.sealed ??= this.context!.seal(node.record); }
   private responseCall(call: Extract<OutputNode, { kind: 'call' }>, completed: boolean): any {
+    if(call.discovery) return {id:call.id,type:'tool_search_call',call_id:call.callId,execution:'client',status:completed?'completed':'in_progress',arguments:completed?JSON.parse(call.arguments):{}};
     const base = { id: call.id, call_id: call.callId, name: call.name, ...(call.namespace ? { namespace: call.namespace } : {}), status: completed ? 'completed' : 'in_progress' };
     if (!call.custom) return { ...base, type: 'function_call', arguments: completed ? call.arguments : '' };
     const input = completed ? JSON.parse(call.arguments).input : '';
@@ -488,7 +513,7 @@ export class DownstreamEncoder {
     for (const node of this.nodes) {
       if (node.kind === 'reasoning') out += this.event('response.reasoning_summary_text.done', { item_id: node.id, output_index: node.index, summary_index: 0, text: node.text }) + this.event('response.reasoning_summary_part.done', { item_id: node.id, output_index: node.index, summary_index: 0, part: { type: 'summary_text', text: node.text } });
       else if (node.kind === 'text') out += this.event('response.output_text.done', { item_id: node.id, output_index: node.index, content_index: 0, text: node.text }) + this.event('response.content_part.done', { item_id: node.id, output_index: node.index, content_index: 0, part: { type: 'output_text', text: node.text, annotations: [] } });
-      else out += this.event(node.custom ? 'response.custom_tool_call_input.done' : 'response.function_call_arguments.done', { item_id: node.id, output_index: node.index, ...(node.custom ? { input: this.responseCall(node, true).input } : { arguments: node.arguments }) });
+      else if(!node.discovery) out += this.event(node.custom ? 'response.custom_tool_call_input.done' : 'response.function_call_arguments.done', { item_id: node.id, output_index: node.index, ...(node.custom ? { input: this.responseCall(node, true).input } : { arguments: node.arguments }) });
       out += this.event('response.output_item.done', { output_index: node.index, item: response.output[node.index] });
     }
     return out + this.event(response.status === 'incomplete' ? 'response.incomplete' : 'response.completed', { response });
